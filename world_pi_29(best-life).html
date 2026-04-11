@@ -1,0 +1,2646 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Акватуриум</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0f; font-family: 'Courier Prime', monospace; color: #ccc; overflow: hidden; user-select: none; height: 100vh; display: flex; flex-direction: column; }
+
+  /* ── ШАПКА — динамическая, переносит строки ── */
+  #ui {
+    flex-shrink: 0;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+    padding: 5px 10px;
+    background: rgba(0,0,0,0.88);
+    border-bottom: 1px solid #1a1a1a;
+    z-index: 10; font-size: 11px;
+  }
+  #ui-title { color: #aaa; letter-spacing: 3px; font-size: 9px; line-height: 1.2; }
+  #ui-title small { display:block; color:#aaa; letter-spacing:1px; font-size:9px; font-weight:bold; }
+  .stat { color: #bbb; white-space: nowrap; } .stat b { color: #fff0c0; }
+  #btns { display: flex; flex-wrap: wrap; gap: 4px; margin-left: auto; }
+  button { background: #0c0c0c; border: 1px solid #333; color: #aaa; padding: 2px 7px; cursor: pointer; font-family: inherit; font-size: 9px; border-radius: 2px; transition: all .12s; white-space: nowrap; }
+  button:hover { background: #1e1e1e; color: #fff; border-color: #666; }
+  button.active { background: #0e0e22; color: #7777ee; border-color: #333388; }
+
+  /* ── ОСНОВНАЯ ОБЛАСТЬ ── */
+  #wrap { display: flex; flex: 1; overflow: hidden; min-height: 0; }
+  canvas#c { display: block; flex-shrink: 0; cursor: crosshair; }
+
+  /* ── ПРАВАЯ ПАНЕЛЬ — всегда 180px, flex-колонка ── */
+  #log {
+    width: 180px; min-width: 180px; flex-shrink: 0;
+    background: #06060a;
+    border-left: 1px solid #151518;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  #log-title {
+    padding: 5px 10px 3px;
+    font-size: 9px; letter-spacing: 2px;
+    color: #999; border-bottom: 1px solid #1a1a22;
+    flex-shrink: 0;
+  }
+
+  /* ── БАННЕР СОБЫТИЯ (катаклизм / левиафан) ── */
+  #event-banner {
+    flex-shrink: 0;
+    display: none;
+    padding: 5px 10px;
+    font-size: 10px; line-height: 1.4;
+    border-bottom: 2px solid #333;
+    text-align: center;
+    font-weight: bold;
+    animation: bannerPulse 1.5s ease-in-out infinite;
+  }
+  @keyframes bannerPulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+
+  /* ── КАРТОЧКА СУЩЕСТВА ── */
+  #creature-card {
+    flex-shrink: 0;
+    border-bottom: 1px solid #1a1a22;
+    padding: 6px 10px;
+    font-size: 10px;
+    line-height: 1.6;
+    color: #3a3a52;
+    min-height: 24px;
+  }
+  #creature-card.active { color: #888; }
+  #creature-card .card-name { font-size: 11px; font-weight: bold; margin-bottom: 1px; }
+  #creature-card .card-row { display:flex; justify-content:space-between; }
+  #creature-card .val { color: #c8c0a0; }
+  #creature-card .gene-title { font-size: 8px; letter-spacing:1px; color:#444; margin-top:3px; border-top:1px solid #1a1a22; padding-top:2px; }
+
+  /* ── ЛОГ СУЩЕСТВА ── */
+  #creature-log {
+    flex-shrink: 0;
+    height: 60px;
+    overflow-y: auto; overflow-x: hidden;
+    border-bottom: 1px solid #1a1a22;
+    scrollbar-width: none;
+  }
+  #creature-log::-webkit-scrollbar { display:none; }
+  #creature-log .cl { padding: 2px 10px; font-size: 9px; color: #404058; border-bottom: 1px solid #0e0e14; }
+  #creature-log .cl.f { color: #a0a0c0; }
+  #creature-log .cl.f2 { color: #606080; }
+
+  /* ── ГРАФИК ПОПУЛЯЦИИ ── */
+  #pop-graph { flex-shrink: 0; border-bottom: 1px solid #1a1a22; }
+
+  /* ── ЛЕТОПИСЬ ── */
+  #log-entries {
+    flex: 1; overflow-y: auto; overflow-x: hidden;
+    padding: 4px 0; min-height: 0;
+    display: flex; flex-direction: column;
+    scrollbar-width: none;
+  }
+  #log-entries::-webkit-scrollbar { display: none; }
+  .ll { padding: 3px 10px; font-size: 10px; line-height: 1.5; color: #505068; border-bottom: 1px solid #111116; flex-shrink: 0; }
+  .ll.f  { color: #d8d8f0; }
+  .ll.f2 { color: #9090aa; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <div id="ui-title">АКВАТУРИУМ<small>v0.29 pi</small></div>
+  <div class="stat">Сутки: <b id="sCycle">0</b></div>
+  <div class="stat">Существ: <b id="sCreatures">0</b></div>
+  <div class="stat">Видов: <b id="sSpecies">0</b></div>
+  <div class="stat">Мутантов: <b id="sMutants">0</b></div>
+  <div class="stat">Спор: <b id="sSpores">0</b></div>
+  <div class="stat" id="btnColonies" style="cursor:pointer;border-bottom:1px solid #333" title="Нажми чтобы подсветить">Колоний: <b id="sColonies">0</b></div>
+  <div class="stat" id="btnEmpires" style="cursor:pointer;border-bottom:1px solid #333" title="Нажми чтобы подсветить">Империй: <b id="sEmpires">0</b></div>
+  <div class="stat" id="btnMegas" style="cursor:pointer;border-bottom:1px solid #333" title="Нажми чтобы подсветить">Мегаструктур: <b id="sMegas">0</b></div>
+  <div class="stat" id="sPhase"></div>
+  <div class="stat" id="sSeason"></div>
+  <div class="stat" title="☄метеориты / ☀засухи / 🧬штормы / 🌊потопы / 🐋левиафаны">Катаклизмы: <b id="sCataclysms">0/0/0/0/0</b></div>
+  <div id="btns">
+    <button id="btnPause">⏸ Пауза</button>
+    <button id="btnFast">⚡ x5</button>
+    <button id="btnMeteor">☄ Метеорит</button>
+    <button id="btnDrought">☀ Засуха</button>
+    <button id="btnStorm">🧬 Шторм</button>
+    <button id="btnFlood">🌊 Потоп</button>
+    <button id="btnLeviathan">🐋 Левиафан</button>
+  </div>
+</div>
+<div id="wrap"><canvas id="c"></canvas>
+<div id="log">
+  <div id="log-title">ЛЕТОПИСЬ</div>
+  <div id="event-banner"></div>
+  <div id="creature-card">· кликни на существо ·</div>
+  <div id="creature-log"></div>
+  <canvas id="pop-graph" width="180" height="60"></canvas>
+  <div id="log-entries"></div>
+</div></div>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha: false });
+const LOG_W = 180;
+// динамический размер — вписываемся в экран
+const W = window.innerWidth - LOG_W;
+const H = window.innerHeight - document.getElementById('ui').offsetHeight;
+canvas.width = W; canvas.height = H;
+
+const CELL = 10; // крупнее клетки = меньше тайлов = быстрее рендер
+const COLS = Math.floor(W / CELL);
+const ROWS = Math.floor(H / CELL);
+// земля занимает ~10% экрана снизу
+const GROUND_Y = Math.floor(ROWS * 0.90);
+
+// тиков до следующего шага (чем крупнее — тем медленнее)
+function ticksPerStep(size, social, isNight) {
+  // база: 1 сег = 20 тиков, 20 сег = 55 тиков
+  let base = 20 + size * 1.8;
+  if (social === 'colony')    base *= 1.2;
+  if (social === 'empire')    base *= 1.6;
+  if (social === 'mega')      base *= 2.2; // мегаструктура — монолитно медленная
+  if (isNight)  base *= 2.5;
+  return base * 0.7; // более живое движение
+}
+
+let leviathan = null; // единственный левиафан, null если нет
+let lasers = []; // [{x1,y1,x2,y2,color,timer}] — активные лазеры для рендера
+let megaPositions = {}; // megaPositions[color] = {cx, cy, stuckSince}
+let corpses = [];
+let spores  = []; // имперские споры-горееды
+let wars    = {}; // wars[colorA+'_'+colorB] = {startCycle, intensity}
+let truces  = {}; // truces[key] = endCycle — перемирия между империями
+let meteorFlash = null; // {x, timer} вспышка метеорита
+let splitCooldown = {}; // splitCooldown[color] = cycle когда можно снова делиться
+let creatures = [];
+let cycle = 0;
+let paused = false, fastMode = false;
+let drought = false, geneticStorm = false;
+let droughtTimer = 0, stormTimer = 0;
+let flood = false, floodTimer = 0, floodLevel = 0;
+let nextId = 1;
+let logs = [];
+const cataclysms = { meteor:0, drought:0, storm:0, flood:0, leviathan:0 };
+
+// ── СЕЗОНЫ ─────────────────────────────────────────────────────────
+// Полный год = 24000 тиков: весна 6000, лето 6000, осень 6000, зима 6000
+const YEAR = 24000;
+function getSeason(){
+  const y = cycle % YEAR;
+  if(y < 6000)  return 'spring';
+  if(y < 12000) return 'summer';
+  if(y < 18000) return 'autumn';
+  return 'winter';
+}
+function seasonPhotoMult(){
+  const s = getSeason();
+  if(s==='summer') return 1.4;
+  if(s==='spring') return 1.1;
+  if(s==='autumn') return 0.7;
+  return 0.15; // зима — почти нет
+}
+function seasonMetaMult(){
+  const s = getSeason();
+  if(s==='winter') return 1.5; // зимой метаболизм выше (тратим резервы)
+  return 1.0;
+}
+const SEASON_NAMES = {spring:'🌱 Весна', summer:'☀ Лето', autumn:'🍂 Осень', winter:'❄ Зима'};
+
+// ── ГЕНЫ ───────────────────────────────────────────────────────────
+// Каждый вид имеет генотип — параметры передаются потомкам с мутацией
+let genePool = {}; // genePool[color] = {aggression, metabolism, photoRate, socialTendency}
+function defaultGenes(){
+  return {
+    aggression:    0.5, // 0=пацифист, 1=агрессор
+    metabolism:    1.0, // множитель расхода энергии
+    photoRate:     1.0, // множитель фотосинтеза
+    socialTendency:0.5, // склонность к колонии
+  };
+}
+function mutateGenes(genes, rate=0.1){
+  const g = {...genes};
+  for(let k in g){
+    if(Math.random() < rate){
+      g[k] = Math.max(0.1, Math.min(2.0, g[k] + (Math.random()-0.5)*0.3));
+    }
+  }
+  return g;
+}
+
+// ── ИСТОРИЯ ПОПУЛЯЦИИ (для графика) ────────────────────────────────
+const POP_HISTORY_LEN = 180; // точек на графике
+let popHistory = {}; // popHistory[color] = [count, count, ...]
+let popHistoryTick = 0;
+
+// карта «горячих точек» битв (накапливается, влияет на скорость роста гор)
+let battleHeat = []; // battleHeat[x] = intensity
+let territory = []; // territory[y][x] = color or null — claimed by empire
+
+const PALETTE = ['#e05252','#52a0e0','#52e07a','#e0c452','#c452e0',
+                 '#e07a52','#52e0d4','#e052a0','#a0e052','#7a52e0'];
+// редкие виды — рождаются только при массовом вымирании
+const RARE_PALETTE = [
+  '#ffffff','#ff88ff','#88ffff','#ffff44','#ff4444',
+  '#44ff44','#4444ff','#ff8800','#00ff88','#8800ff'
+];
+const RARE_NAMES = {
+  '#ffffff':'Белые','#ff88ff':'Призрачные','#88ffff':'Хрустальные',
+  '#ffff44':'Солнечные','#ff4444':'Алые Огни','#44ff44':'Нефритовые',
+  '#4444ff':'Сапфировые','#ff8800':'Янтарные Огни','#00ff88':'Изумрудные Огни','#8800ff':'Тёмные'
+};
+const NAMES_BASE = {
+  '#e05252':'Алые','#52a0e0':'Лазурные','#52e07a':'Изумрудные',
+  '#e0c452':'Золотые','#c452e0':'Аметистовые','#e07a52':'Янтарные',
+  '#52e0d4':'Бирюзовые','#e052a0':'Пурпурные','#a0e052':'Жадеитовые','#7a52e0':'Индиговые'
+};
+const NAMES = Object.assign({}, NAMES_BASE, RARE_NAMES);
+let activeColors = new Set();
+let STARTER_COLORS = new Set();
+let rareColors = new Set(); // редкие виды — особые правила
+let extinctionActive = false; // флаг массового вымирания
+let extinctionLevel = 0;      // 0..1 — насколько заполнен экран трупами
+function colorName(c){ return NAMES[c] || 'Мутант'; }
+
+function isNight(){ return (cycle % 6000) >= 4000; }
+
+// ── ПОЧВА ──────────────────────────────────────────────────────────
+function initSoil(){
+  soil = [];
+  battleHeat = new Array(COLS).fill(0);
+  territory = [];
+  for(let y=0;y<ROWS;y++){ territory[y]=[]; for(let x=0;x<COLS;x++) territory[y][x]=null; }
+  for(let y=0;y<ROWS;y++){
+    soil[y]=[];
+    for(let x=0;x<COLS;x++){
+      if(y >= GROUND_Y){
+        const d = (y - GROUND_Y) / 8;
+        soil[y][x] = { solid:true, color:null, shade: Math.max(0.08, 0.35 - d*0.06), _css:null };
+      } else soil[y][x] = null;
+    }
+  }
+  // минимальный рельеф — маленькие холмики
+  for(let x=0;x<COLS;x++){
+    const bump = Math.round(Math.sin(x*0.14+0.8)*2 + Math.random()*2);
+    for(let b=0;b<bump;b++){
+      const gy = GROUND_Y - 1 - b;
+      if(gy >= 0) soil[gy][x] = { solid:true, color:null, shade:0.22 + Math.random()*0.08, _css:null };
+    }
+  }
+}
+
+function getSoilTop(x){
+  for(let y=0;y<ROWS;y++)
+    if(soil[y]&&soil[y][x]&&soil[y][x].solid) return y;
+  return ROWS;
+}
+
+// находит нижнюю свободную клетку в колонке x начиная с fromY вниз
+// блок "падает" туда по гравитации
+function getSoilBottom(x, fromY){
+  const startY = Math.min(ROWS-1, Math.max(0, fromY));
+  for(let y=startY; y<ROWS; y++){
+    const below = y+1;
+    const blocked = below>=ROWS || (soil[below]&&soil[below][x]&&soil[below][x].solid);
+    if(blocked && !(soil[y]&&soil[y][x]&&soil[y][x].solid)){
+      return y; // эта клетка свободна, ниже — твёрдо
+    }
+  }
+  // если всё занято снизу — кладём на вершину (гора растёт вверх)
+  return Math.max(0, getSoilTop(x) - 1);
+}
+
+function setSoil(x, y, color){
+  if(x<0||x>=COLS||y<0||y>=ROWS) return;
+  soil[y][x] = { solid:true, color, shade:0.45, _css:null };
+}
+
+// регистрируем тепло битвы → горы растут быстрее
+function registerBattle(x){
+  if(x>=0&&x<COLS) battleHeat[x] = Math.min(battleHeat[x]+3, 30);
+  // шрамы убраны — они создавали почву из воздуха
+  // горы теперь растут только из трупов
+}
+
+// охлаждение тепла битв каждые N тиков
+function coolBattleHeat(){
+  for(let x=0;x<COLS;x++)
+    if(battleHeat[x]>0) battleHeat[x] = Math.max(0, battleHeat[x]-0.02);
+}
+
+// ── ТРУП ───────────────────────────────────────────────────────────
+// ── ЛЕВИАФАН ───────────────────────────────────────────────────────
+// Огромное существо раз в 100к тиков (30% шанс).
+// Плывёт по прямой слева направо или наоборот, пожирая всё на пути.
+// Выделяет кал (30% съеденного) → почва/горы. 70% → живые существа.
+class Leviathan {
+  constructor(){
+    this.height = Math.floor(ROWS * 0.25);
+    this.dir    = Math.random() < 0.5 ? 1 : -1;
+    this.px     = this.dir === 1 ? -this.height*CELL : W + this.height*CELL;
+    this.cy     = Math.floor(ROWS * (0.15 + Math.random()*0.45));
+    this.speed  = (W + this.height*CELL*2) / 3000 * this.dir;
+    this.alive  = true;
+    this.stepTimer = 0;
+    // накопители съеденного
+    this.digestedSegs  = 0; // сегменты существ и почвы — копятся
+    this.poopAccum     = 0; // 30% накопленного → в почву (кал)
+    this.birthAccum    = 0; // 70% накопленного → в живых
+    const hues = ['#1a3a2a','#1a2a3a','#2a1a3a','#3a1a1a'];
+    this.bodyColor = hues[Math.floor(Math.random()*hues.length)];
+  }
+
+  get col1(){ return Math.floor(this.px / CELL); }
+  get col2(){ return Math.floor((this.px + this.height*CELL) / CELL); }
+  get row1(){ return Math.max(0, this.cy - Math.floor(this.height/2)); }
+  get row2(){ return Math.min(ROWS-1, this.cy + Math.floor(this.height/2)); }
+
+  update(){
+    if(!this.alive) return;
+
+    this.stepTimer++;
+    if(this.stepTimer < 3) return;
+    this.stepTimer = 0;
+
+    this.px += this.speed * 3;
+
+    if(this.dir === 1 && this.px > W + this.height*CELL){ this.die(); return; }
+    if(this.dir ===-1 && this.px + this.height*CELL < -this.height*CELL){ this.die(); return; }
+
+    const c1 = this.col1, c2 = this.col2;
+    const r1 = this.row1, r2 = this.row2;
+
+    // ── ПОЖИРАНИЕ ПОЧВЫ — каждый блок = 1 сег ──
+    for(let x=Math.max(0,c1); x<=Math.min(COLS-1,c2); x++){
+      for(let y=r1; y<=r2; y++){
+        if(soil[y]&&soil[y][x]&&soil[y][x].solid){
+          soil[y][x]=null;
+          this.digestedSegs++;
+        }
+      }
+    }
+
+    // ── ПОЖИРАНИЕ СУЩЕСТВ ──
+    for(let cr of creatures){
+      if(!cr.alive) continue;
+      const h=cr.head();
+      if(h.x>=c1&&h.x<=c2&&h.y>=r1&&h.y<=r2){
+        if(cr.socialStatus==='empire'||cr.socialStatus==='mega'){
+          // крупные структуры не съедаются — распадаются
+          cr.socialStatus='colony';
+          cr.bondedTo=null; cr.inEmpire=false;
+          cr.dx=(Math.random()<0.5?1:-1)*2;
+          cr.dy=Math.floor(Math.random()*3)-1;
+          cr.energy*=0.5;
+        } else {
+          // съедаем — считаем сегменты
+          this.digestedSegs += cr.size;
+          cr.alive = false;
+          for(let c2x of creatures) if(c2x.bondedTo===cr.id) c2x.bondedTo=null;
+        }
+      }
+    }
+
+    // ── РАСПРЕДЕЛЕНИЕ НАКОПЛЕННОГО ──
+    // каждые 3 шага (9 тиков) распределяем накопленное по пропорции
+    if(this.digestedSegs > 0){
+      const toDistribute = this.digestedSegs;
+      this.digestedSegs = 0;
+      this.poopAccum  += Math.floor(toDistribute * 0.30); // 30% → кал → горы
+      this.birthAccum += Math.floor(toDistribute * 0.70); // 70% → живые
+    }
+
+    // ── КАЛ → ГОРЫ (сзади) ──
+    if(this.poopAccum >= 3){
+      const poopX = this.dir===1
+        ? Math.max(2, this.col1 - 3)
+        : Math.min(COLS-3, this.col2 + 3);
+      // строим холм из накопленного кала
+      const n = this.poopAccum;
+      this.poopAccum = 0;
+      const radius = Math.max(1, Math.floor(Math.sqrt(n) * 1.2));
+      const x0 = Math.max(0, poopX-radius-1), x1 = Math.min(COLS-1, poopX+radius+1);
+      const baseTop = {};
+      for(let bx=x0;bx<=x1;bx++) baseTop[bx]=getSoilTop(bx);
+      const slots=[];
+      for(let layer=0;layer<=radius+4;layer++){
+        const w=radius-layer; if(w<0) break;
+        for(let dx=-w;dx<=w;dx++){
+          const bx=poopX+dx; if(bx<x0||bx>x1) continue;
+          const gy=(baseTop[bx]||GROUND_Y)-1-layer;
+          if(gy>=0) slots.push({bx,gy,layer});
+        }
+      }
+      slots.sort((a,b)=>b.layer-a.layer);
+      const toPlace=Math.min(n,slots.length);
+      for(let i=0;i<toPlace;i++) setSoil(slots[i].bx,slots[i].gy,null); // серая почва
+    }
+
+    // ── РОЖДЕНИЕ СУЩЕСТВ (70%) — по одному-два в шаг ──
+    if(this.birthAccum >= 2){
+      const born = Math.min(3, Math.floor(this.birthAccum / 2));
+      this.birthAccum -= born * 2;
+      const cols = [...activeColors];
+      const poopX = this.dir===1
+        ? Math.max(2, this.col1 - 2)
+        : Math.min(COLS-3, this.col2 + 2);
+      for(let i=0; i<born; i++){
+        let col;
+        if(Math.random()<0.12){
+          const unused=PALETTE.filter(p=>!activeColors.has(p));
+          col=unused.length>0?unused[0]:PALETTE[Math.floor(Math.random()*PALETTE.length)];
+          activeColors.add(col);
+          if(!genePool[col]) genePool[col]=mutateGenes(defaultGenes(),0.4);
+        } else {
+          col=cols[Math.floor(Math.random()*cols.length)]||PALETTE[0];
+        }
+        const py=this.row1+Math.floor(Math.random()*(this.row2-this.row1));
+        const child=new Creature(
+          Math.max(1,Math.min(COLS-2,poopX+Math.floor(Math.random()*5)-2)),
+          Math.max(1,py), col, 1
+        );
+        child.energy=60;
+        child.seekingColony=true;
+        creatures.push(child);
+      }
+    }
+  }
+
+  die(){
+    this.alive=false;
+    // при уходе выпускает остатки
+    addLog('🐋 Левиафан ушёл в глубины. Жизнь возрождается...');
+  }
+
+  render(ctx){
+    if(!this.alive) return;
+    const px = this.px;
+    const r1=this.row1, r2=this.row2;
+    const bodyW = this.height*CELL;
+    const bodyH = (r2-r1)*CELL;
+    const bodyY = r1*CELL;
+
+    // тело — тёмный градиент
+    const[rb,gb,bb]=hexRgb(this.bodyColor);
+    const grad=ctx.createLinearGradient(px, bodyY, px+bodyW, bodyY);
+    grad.addColorStop(0,`rgba(${rb},${gb},${bb},0.0)`);
+    grad.addColorStop(0.08,`rgba(${rb+20},${gb+20},${bb+20},0.95)`);
+    grad.addColorStop(0.5, `rgba(${rb+30},${gb+30},${bb+30},1.0)`);
+    grad.addColorStop(0.92,`rgba(${rb+20},${gb+20},${bb+20},0.95)`);
+    grad.addColorStop(1,   `rgba(${rb},${gb},${bb},0.0)`);
+    ctx.fillStyle=grad;
+    // скруглённое тело через эллипс
+    ctx.beginPath();
+    ctx.ellipse(px+bodyW/2, bodyY+bodyH/2, bodyW/2, bodyH/2, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    // брюхо — светлее снизу
+    const belly=ctx.createLinearGradient(px,bodyY,px,bodyY+bodyH);
+    belly.addColorStop(0,'rgba(0,0,0,0)');
+    belly.addColorStop(1,`rgba(${rb+60},${gb+80},${bb+60},0.18)`);
+    ctx.fillStyle=belly;
+    ctx.beginPath();
+    ctx.ellipse(px+bodyW/2, bodyY+bodyH/2, bodyW/2, bodyH/2, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    // глаз — на морде (зависит от направления)
+    const eyeX = this.dir===1 ? px+bodyW*0.82 : px+bodyW*0.18;
+    const eyeY = bodyY+bodyH*0.35;
+    ctx.fillStyle='rgba(255,255,255,0.9)';
+    ctx.beginPath(); ctx.arc(eyeX, eyeY, 5, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle='rgba(20,10,5,1)';
+    ctx.beginPath(); ctx.arc(eyeX+(this.dir*1.5), eyeY, 2.5, 0, Math.PI*2); ctx.fill();
+    // блик
+    ctx.fillStyle='rgba(255,255,255,0.7)';
+    ctx.beginPath(); ctx.arc(eyeX+this.dir*0.5-0.5, eyeY-1, 1, 0, Math.PI*2); ctx.fill();
+
+    // плавники — сверху и снизу
+    const finX = px+bodyW*0.4;
+    ctx.fillStyle=`rgba(${rb+10},${gb+10},${bb+10},0.7)`;
+    // верхний плавник
+    ctx.beginPath();
+    ctx.moveTo(finX, bodyY);
+    ctx.lineTo(finX+bodyW*0.1, bodyY-bodyH*0.18);
+    ctx.lineTo(finX+bodyW*0.2, bodyY);
+    ctx.fill();
+    // хвост
+    const tailX = this.dir===1 ? px+bodyW*0.05 : px+bodyW*0.95;
+    const wag = Math.sin(cycle*0.08)*bodyH*0.2;
+    ctx.beginPath();
+    ctx.moveTo(tailX, bodyY+bodyH*0.3+wag);
+    ctx.lineTo(tailX-this.dir*bodyW*0.12, bodyY+bodyH*0.1+wag);
+    ctx.lineTo(tailX-this.dir*bodyW*0.12, bodyY+bodyH*0.7+wag);
+    ctx.fill();
+
+    // пульсирующий ореол вокруг тела
+    const pulse=0.04+Math.sin(cycle*0.05)*0.02;
+    ctx.strokeStyle=`rgba(${rb+40},${gb+60},${bb+40},${pulse})`;
+    ctx.lineWidth=8;
+    ctx.beginPath();
+    ctx.ellipse(px+bodyW/2, bodyY+bodyH/2, bodyW/2+4, bodyH/2+4, 0, 0, Math.PI*2);
+    ctx.stroke();
+  }
+}
+
+class Corpse {
+  constructor(segs, color){
+    this.segs  = segs.map(s=>({...s}));
+    this.color = color;
+    this.timer = 600;   // тиков до окаменения — споры едят часть, остаток идёт в гору
+    this.alive = true;  // alive = ещё не окаменел
+  }
+  update(){
+    this.timer--;
+    if(this.timer <= 0){ this.petrify(); this.alive = false; }
+  }
+  petrify(){
+    if(!this.segs.length) return;
+    const cx = Math.round(this.segs.reduce((s,seg)=>s+seg.x,0)/this.segs.length);
+    const cy = Math.round(this.segs.reduce((s,seg)=>s+seg.y,0)/this.segs.length);
+    this._buildHill(cx, this.segs.length, this.color, cy);
+  }
+
+  // строим пологий холм из n блоков с центром cx, падая вниз от deathY
+  _buildHill(cx, n, color, deathY){
+    // radius достаточно большой чтобы slots >= n всегда
+    // slots = 1 + 2*(radius+2) = 2*radius+5
+    // нам нужно 2*radius+5 >= n → radius >= (n-5)/2
+    const minRadius = Math.ceil((n-5)/2);
+    const radius = Math.max(2, Math.floor(Math.sqrt(n) * 1.6), minRadius);
+    // генерируем слоты вокруг центра смерти — по убыванию приоритета
+    // слоты идут от центра наружу горизонтально, блоки падают вниз гравитацией
+    const slots = [];
+    for(let dx = 0; dx <= radius+2; dx++){
+      for(let sign of (dx===0?[0]:[-1,1])){
+        const bx = cx + dx*sign;
+        if(bx<0||bx>=COLS) continue;
+        // блок падает вниз от deathY до первой твёрдой поверхности
+        const gy = getSoilBottom(bx, deathY);
+        if(gy>=0) slots.push({bx, gy, dist:dx});
+      }
+    }
+    // сортируем: сначала ближние к центру (пирамида)
+    slots.sort((a,b)=>a.dist-b.dist);
+    const toPlace = Math.min(n, slots.length);
+    // дедупликация — не класть два блока в одну клетку
+    const placed = new Set();
+    let count = 0;
+    for(let s of slots){
+      if(count >= toPlace) break;
+      const key = s.bx+'_'+s.gy;
+      if(placed.has(key)) continue;
+      placed.add(key);
+      setSoil(s.bx, s.gy, color);
+      count++;
+    }
+  }
+}
+
+// ── СПОРА ──────────────────────────────────────────────────────────
+// Рождается из империи/мегаструктуры.
+// Приоритет 1: охотится на трупы → поедает сегменты → накапливает энергию
+// Приоритет 2: если трупов нет — ест чужую почву (горы)
+// При достаточной энергии — метаморфоз в полноценное существо
+class Spore {
+  constructor(x, y, color){
+    this.id     = nextId++;
+    this.x      = x;
+    this.y      = y;
+    this.color  = color; // цвет родителя — может смениться при метаморфозе
+    this.energy = 40;
+    this.alive  = true;
+    this.age    = 0;
+    this.stepTimer = 0;
+    this.corpseEaten = 0; // сколько сегментов трупов съедено всего
+    this.corpseColors = {}; // corpseColors[color] = кол-во съеденных сегментов этого цвета
+  }
+
+  head(){ return {x:this.x, y:this.y}; }
+
+  update(){
+    if(!this.alive) return;
+    this.age++;
+    this.energy -= 0.05;
+    if(this.energy <= 0){ this.die(); return; }
+    if(this.age > 2000){ this.die(); return; }
+
+    // метаморфоз — при достаточной энергии спора становится существом
+    if(this.energy >= 120 && this.corpseEaten >= 3){
+      this.metamorphose();
+      return;
+    }
+
+    this.stepTimer++;
+    if(this.stepTimer >= 8){
+      this.stepTimer = 0;
+      this.move();
+    }
+  }
+
+  move(){
+    // === ПРИОРИТЕТ 1: ищем ближайший труп ===
+    let bestCorpse = null, bestDist = 9999;
+    for(let cp of corpses){
+      if(!cp.alive || !cp.segs.length) continue;
+      const d = Math.abs(cp.segs[0].x - this.x) + Math.abs(cp.segs[0].y - this.y);
+      if(d < bestDist){ bestDist = d; bestCorpse = cp; }
+    }
+
+    if(bestCorpse && bestDist < 40){
+      // двигаемся к трупу
+      const tx = bestCorpse.segs[0].x, ty = bestCorpse.segs[0].y;
+      const dx = tx > this.x ? 1 : tx < this.x ? -1 : 0;
+      const dy = ty > this.y ? 1 : ty < this.y ? -1 : 0;
+      const nx = Math.max(0, Math.min(COLS-1, this.x + dx));
+      const ny = Math.max(0, Math.min(ROWS-1, this.y + dy));
+      // если добрались до сегмента трупа — съедаем
+      for(let i=0; i<bestCorpse.segs.length; i++){
+        const seg = bestCorpse.segs[i];
+        if(Math.abs(seg.x - nx) <= 1 && Math.abs(seg.y - ny) <= 1){
+          this.energy += 18;
+          this.corpseEaten++;
+          // запоминаем цвет съеденного трупа
+          const ec = bestCorpse.color;
+          this.corpseColors[ec] = (this.corpseColors[ec]||0) + 1;
+          bestCorpse.segs.splice(i, 1);
+          if(bestCorpse.segs.length === 0) bestCorpse.alive = false;
+          break;
+        }
+      }
+      if(!(soil[ny] && soil[ny][nx] && soil[ny][nx].solid)){
+        this.x = nx; this.y = ny;
+      }
+      return;
+    }
+
+    // === ПРИОРИТЕТ 2: нет трупов — едим чужую почву только если гора высокая ===
+    const searchDirs = [[0,1],[0,2],[1,1],[-1,1],[1,0],[-1,0],[2,1],[-2,1],[0,3]];
+    let foundSoil = false;
+    for(let [ddx,ddy] of searchDirs){
+      const nx2 = this.x+ddx, ny2 = this.y+ddy;
+      if(nx2<0||nx2>=COLS||ny2<0||ny2>=ROWS) continue;
+      if(soil[ny2]&&soil[ny2][nx2]&&soil[ny2][nx2].solid){
+        const s = soil[ny2][nx2];
+        // едим только если гора высокая
+        // бурильщик ест чужой И свой цвет, но не трупную почву своего цвета
+        const colTop = getSoilTop(nx2);
+        const isOwn = s.color === this.color;
+        const isTombstone = isOwn && !this.isDriller;
+        if(!isTombstone && (this.isDriller || !isOwn) && colTop < GROUND_Y - 3){
+          this.energy += s.stardust ? 25 : 12;
+          soil[ny2][nx2] = null;
+          this.y = Math.max(0, ny2 - 1);
+          foundSoil = true; break;
+        }
+      }
+    }
+    if(!foundSoil){
+      const ddx2 = Math.random()<0.5?1:-1;
+      const nx3 = Math.max(0,Math.min(COLS-1, this.x+ddx2));
+      if(!(soil[this.y]&&soil[this.y][nx3]&&soil[this.y][nx3].solid)) this.x = nx3;
+      const ny4 = Math.min(ROWS-1, this.y+1);
+      if(!(soil[ny4]&&soil[ny4][this.x]&&soil[ny4][this.x].solid)) this.y = ny4;
+    }
+  }
+
+  metamorphose(){
+    // спора превращается в полноценное существо
+    this.alive = false;
+    const startLen = 2 + Math.floor(this.corpseEaten / 4);
+    const newLen = Math.min(6, startLen);
+
+    // определяем доминирующий цвет съеденных трупов
+    let dominantColor = this.color; // по умолчанию — цвет родителя
+    let maxEaten = 0;
+    for(let col in this.corpseColors){
+      if(this.corpseColors[col] > maxEaten){
+        maxEaten = this.corpseColors[col];
+        dominantColor = col;
+      }
+    }
+    // если съела больше чужих чем своих — наследует их цвет
+    const inherited = dominantColor !== this.color;
+    if(inherited && !activeColors.has(dominantColor)){
+      activeColors.add(dominantColor);
+      if(!genePool[dominantColor]) genePool[dominantColor] = mutateGenes(defaultGenes(), 0.2);
+    }
+
+    const child = new Creature(this.x, this.y, dominantColor, newLen);
+    child.energy = this.energy * 1.2;
+    child.seekingColony = true;
+    if(dominantColor !== this.color && genePool[dominantColor]){
+      child.genes = mutateGenes(genePool[dominantColor], 0.1);
+    }
+    creatures.push(child);
+    addLog(`🦠 Спора переродилась → ${colorName(dominantColor)} (${newLen}сег.)${inherited?' ⬅ наследие':''}`);
+  }
+
+  die(){
+    this.alive = false;
+    // спора умирает без следа — блок создавать не из чего
+  }
+}
+
+// ── СУЩЕСТВО ──────────────────────────────────────────────────────
+class Creature {
+  constructor(x, y, color, len=1){
+    this.id    = nextId++;
+    this.color = color;
+    this.segments = [{x,y}];
+    for(let i=1;i<len;i++) this.segments.push({x:Math.max(0,x-i),y});
+    this.len      = len;
+    this.energy   = 60 + len*15;
+    this.alive    = true;
+    this.age      = 0;
+    this.dx = Math.random()<0.5?1:-1; this.dy = 0;
+    this.stepTimer = 0;
+    this.laterals  = [];
+    this.reproTimer= 0;
+    this.inEmpire  = false;
+    this.socialStatus = 'solo'; // solo | colony | empire | mega
+    this.bondedTo = null; // id партнёра по мостику
+    this.speciesFraction = 0; // доля вида в популяции, обновляется в tick()
+    this.atWar = false;       // участвует в войне прямо сейчас
+    this.seekingColony = (len===1); // эмбрион ищет колонию
+    this.trail = []; // шлейф движения [{x,y,age}]
+    this.offspring = 0; // число потомков
+    this.weight = 1.0; // вес: растёт с сегментами и энергией
+    // гены — наследуются от родителя, влияют на поведение
+    this.genes = genePool[color] ? {...genePool[color]} : defaultGenes();
+    // имя — пиздюк для молодых, взрослое при достижении 12 сег
+    this.name = 'Пиздюк-'+this.id;
+    this.isAdult = false;
+  }
+
+  get size(){ return this.segments.length; }
+  get isEmbryo(){ return this.size === 1; }
+  head(){ return this.segments[0]; }
+
+  update(){
+    if(!this.alive) return;
+    this.age++;
+    const night = isNight();
+
+    // фотосинтез — только днём, сезонный и генетический множитель
+    if(!drought && !night){
+      const h3 = this.head();
+      const depthFactor = Math.max(0, 1 - h3.y / GROUND_Y);
+      const weightPenalty = Math.max(0.3, 1 - Math.max(0, this.weight - 4) / 20);
+      const photoBase = this.socialStatus==='mega'?2.5:
+                        this.socialStatus==='empire'?2.0:
+                        this.socialStatus==='colony'?1.5:1.2;
+      this.energy += photoBase * this.genes.photoRate * seasonPhotoMult() * (0.4 + 0.6 * depthFactor * weightPenalty);
+    }
+
+    // метаболизм — растёт с размером, создаёт естественную смертность
+    const metaBase = this.socialStatus==='mega'?0.003:
+                    this.socialStatus==='empire'?0.004:
+                    this.socialStatus==='colony'?0.005:0.006;
+    // крупные существа дорого обходятся — естественный отбор
+    this.energy -= (night ? 0.002 : (metaBase + this.size*0.001)) * this.genes.metabolism * seasonMetaMult();
+    if(this.energy <= 0){ this.die(); return; }
+
+    // вес: сегменты + энергия → тяжелее = ниже
+    this.weight = this.size * (1 + Math.min(1, this.energy / 200));
+
+    // видовой баланс — умеренное давление для долгосрочного разнообразия
+    if(this.speciesFraction > 0.40)      this.energy -= 0.25;
+    else if(this.speciesFraction > 0.25) this.energy -= 0.08;
+    else if(this.speciesFraction < 0.06) this.energy += 0.3;
+
+    // вертикальный дрейф по весу — мягкий, раз в 40 тиков
+    // не перезаписывает dy жёстко, а добавляет вертикальное смещение вероятностно
+    if(this.stepTimer === 0){  // только после каждого хода
+      const lightThresh = 3;
+      const heavyThresh = 12;
+      const h2 = this.head();
+      if(this.weight < lightThresh){
+        // лёгкие: 70% шанс двигаться вверх если ниже верхней четверти
+        const targetZone = Math.floor(ROWS * 0.25);
+        if(h2.y > targetZone && Math.random() < 0.7)
+          this.dy = -1;
+        else if(h2.y <= targetZone)
+          this.dy = Math.random() < 0.5 ? 0 : this.dx; // у поверхности — горизонталь
+      } else if(this.weight > heavyThresh){
+        // тяжёлые: 60% шанс вниз если выше нижней трети
+        const targetZone = Math.floor(ROWS * 0.65);
+        if(h2.y < targetZone && Math.random() < 0.6)
+          this.dy = 1;
+      } else {
+        // средние — горизонтальное блуждание, dy гасится
+        if(Math.random() < 0.4) this.dy = 0;
+      }
+    }
+
+    // фотосинтез усилен в верхней трети для лёгких
+    // (основной фотосинтез ниже, этот — дополнительный бонус)
+
+    // движение
+    this.stepTimer++;
+    const needed = ticksPerStep(this.size, this.socialStatus, night);
+    if(this.stepTimer >= needed){
+      this.stepTimer = 0;
+      if(this.age % 3 === 0) this.think(); // AI раз в 3 тика — Pi экономия CPU
+      this.step();
+    }
+
+    // размножение (заблокировано ночью и при перенаселении)
+    const pop = creatures.filter(cr=>cr.alive).length;
+    const reproOk = this.socialStatus==='solo'
+        ? (!night && pop<180 && this.size>=8  && this.energy>120)
+        : (pop<180 && this.size>=6 && this.energy>80); // колонии/империи/меги размножаются и ночью
+    if(reproOk){
+      this.reproTimer++;
+      if(this.reproTimer > 200){ this.reproduce(); this.reproTimer=0; }
+    } else {
+      this.reproTimer = 0;
+    }
+
+    // === СТАРЕНИЕ — естественная смерть ===
+    // каждый вид живёт своё время: одиночки короче, мегаструктуры дольше
+    const maxAge = this.socialStatus==='mega'   ? 40000 :
+                   this.socialStatus==='empire' ? 28000 :
+                   this.socialStatus==='colony' ? 18000 : 10000;
+    // вероятность смерти от старости нарастает после половины жизни
+    if(this.age > maxAge * 0.5){
+      const oldness = (this.age - maxAge*0.5) / (maxAge*0.5);
+      if(Math.random() < oldness * 0.00015) { this.die(); return; }
+    }
+
+    // рост за накопленную энергию
+    // одиночке нужно 80 энергии, члену империи 60 (коллектив помогает)
+    const growThresh = this.socialStatus==='mega'?80:
+                        this.socialStatus==='empire'?100:
+                        this.socialStatus==='colony'?120:150;
+    if(this.energy > growThresh && this.len < 20 && this.age % 150 === 0){
+      this.grow();
+    }
+
+    // одиночка с 20 сег без империи — слишком тяжёлый, умирает
+    if(this.size>=20 && this.socialStatus==='solo' && this.age>800) this.die();
+
+    // шлейф: добавляем текущую голову каждый тик
+    const hh=this.head();
+    this.trail.push({x:hh.x,y:hh.y,age:0});
+    for(let t of this.trail) t.age++;
+    if(this.trail.length>4) this.trail.shift();
+
+    // территория: империи метят клетки вокруг себя
+    if(this.inEmpire && cycle%6===0){
+      for(let seg of this.segments){
+        const tx=seg.x, ty=seg.y;
+        if(tx>=0&&tx<COLS&&ty>=0&&ty<ROWS) territory[ty][tx]=this.color;
+        // 1-клеточный ореол
+        for(let [ox,oy] of [[-1,0],[1,0],[0,-1],[0,1]]){
+          const nx2=tx+ox,ny2=ty+oy;
+          if(nx2>=0&&nx2<COLS&&ny2>=0&&ny2<ROWS&&!territory[ny2][nx2])
+            territory[ny2][nx2]=this.color;
+        }
+      }
+    }
+  }
+
+  think(){
+    const h = this.head();
+    let nearEnemy=null, nearFriend=null, nearCorpse=null;
+    let dE=9999, dF=9999, dC=9999;
+
+    for(let cr of creatures){
+      if(!cr.alive||cr===this) continue;
+      const d = Math.hypot(h.x-cr.head().x, h.y-cr.head().y);
+      if(cr.color!==this.color){ if(d<dE){dE=d;nearEnemy=cr;} }
+      else                     { if(d<dF){dF=d;nearFriend=cr;} }
+    }
+
+    // поиск трупов для поедания
+    for(let cp of corpses){
+      if(!cp.alive||!cp.segs.length) continue;
+      const d = Math.hypot(h.x-cp.segs[0].x, h.y-cp.segs[0].y);
+      if(d<dC){ dC=d; nearCorpse=cp; }
+    }
+
+    // социальный статус присваивается глобально через detectClusters() раз в 60 тиков
+    // здесь только читаем this.socialStatus
+
+    // === ЭМБРИОН: ищет колонию ===
+    if(this.seekingColony){
+      if(nearFriend && dF < 50){
+        // нашли — идём к ним
+        const a = Math.atan2(nearFriend.head().y-h.y, nearFriend.head().x-h.x);
+        this.dx = Math.round(Math.cos(a)); this.dy = Math.round(Math.sin(a));
+        if(dF < 3) this.seekingColony = false; // добрались
+        return;
+      }
+      // нет рядом сородичей — блуждаем в поисках
+      if(Math.random()<0.25){
+        const dirs=[[1,0],[-1,0],[0,-1],[0,1]];
+        [this.dx,this.dy]=dirs[Math.floor(Math.random()*dirs.length)];
+      }
+      // эмбрион убегает от ЛЮБОГО чужого
+      if(nearEnemy && dE<15){
+        const a=Math.atan2(h.y-nearEnemy.head().y,h.x-nearEnemy.head().x);
+        this.dx=Math.round(Math.cos(a)); this.dy=Math.round(Math.sin(a));
+      }
+      if(h.x<=1)this.dx=1; if(h.x>=COLS-2)this.dx=-1; if(h.y<=2)this.dy=1;
+      return;
+    }
+
+    // в войне — не убегаем, атакуем всех врагов
+    if(this.atWar && nearEnemy && dE<45){
+      // проверяем что враг тоже из воюющей группы
+      const warKey=[this.color,nearEnemy.color].sort().join('_');
+      if(wars[warKey]){
+        const a=Math.atan2(nearEnemy.head().y-h.y,nearEnemy.head().x-h.x);
+        this.dx=Math.round(Math.cos(a)); this.dy=Math.round(Math.sin(a));
+        return;
+      }
+    }
+
+    // страх: убегать от крупных хищников (только если не воюем)
+    if(!this.atWar && nearEnemy && nearEnemy.size>this.size+3 && dE<20){
+      const a=Math.atan2(h.y-nearEnemy.head().y,h.x-nearEnemy.head().x);
+      this.dx=Math.round(Math.cos(a)); this.dy=Math.round(Math.sin(a));
+      return;
+    }
+
+    // территориальность: если чужой в нашей зоне — атакуем агрессивнее
+    if(this.inEmpire && nearEnemy && dE<30){
+      const eh=nearEnemy.head();
+      if(eh.x>=0&&eh.x<COLS&&eh.y>=0&&eh.y<ROWS&&territory[eh.y][eh.x]===this.color){
+        // враг на нашей территории — немедленно атаковать
+        const a=Math.atan2(eh.y-h.y,eh.x-h.x);
+        this.dx=Math.round(Math.cos(a)); this.dy=Math.round(Math.sin(a));
+        return;
+      }
+    }
+
+    // магнетизм империи
+    // магнетизм: чем выше статус — тем сильнее притяжение
+    // притяжение + мостиковая связь
+    const pullRadius = this.size<12 ? 0 :
+                       this.socialStatus==='mega'   ? 35 :
+                       this.socialStatus==='empire' ? 28 :
+                       this.socialStatus==='colony' ? 20 : 15;
+
+    // проверить жив ли партнёр по мостику
+    if(this.bondedTo !== null){
+      const partner = creatures.find(x=>x.id===this.bondedTo&&x.alive);
+      if(!partner || partner.color!==this.color) this.bondedTo=null;
+    }
+
+    // взрослый без партнёра ищет ближайшего взрослого сородича для связи
+    if(this.size>=12 && this.bondedTo===null && nearFriend && nearFriend.size>=12 && dF<20){
+      this.bondedTo = nearFriend.id;
+      if(nearFriend.bondedTo===null) nearFriend.bondedTo = this.id;
+    }
+
+    // если есть партнёр — держать дистанцию 3-8 клеток (мостик)
+    if(this.bondedTo !== null){
+      const partner = creatures.find(x=>x.id===this.bondedTo&&x.alive);
+      if(partner){
+        const bd = Math.hypot(h.x-partner.head().x, h.y-partner.head().y);
+        if(bd > 10){
+          // слишком далеко — идём к партнёру
+          const a=Math.atan2(partner.head().y-h.y, partner.head().x-h.x);
+          this.dx=Math.round(Math.cos(a)); this.dy=Math.round(Math.sin(a));
+          return;
+        } else if(bd < 3){
+          // слишком близко — отходим
+          const a=Math.atan2(h.y-partner.head().y, h.x-partner.head().x);
+          this.dx=Math.round(Math.cos(a)); this.dy=Math.round(Math.sin(a));
+          return;
+        }
+        // иначе двигаемся перпендикулярно — патрулируем вокруг партнёра
+        const a=Math.atan2(partner.head().y-h.y, partner.head().x-h.x);
+        const perp = a + Math.PI/2;
+        this.dx=Math.round(Math.cos(perp)); this.dy=Math.round(Math.sin(perp));
+        return;
+      }
+    }
+
+    if(nearFriend && nearFriend.size>=12 && dF < pullRadius){
+      const a=Math.atan2(nearFriend.head().y-h.y,nearFriend.head().x-h.x);
+      this.dx=Math.round(Math.cos(a)); this.dy=Math.round(Math.sin(a));
+      return;
+    }
+
+    // охота на труп (50% энергии, приоритет если близко)
+    if(nearCorpse && dC < 35){
+      const a=Math.atan2(nearCorpse.segs[0].y-h.y,nearCorpse.segs[0].x-h.x);
+      this.dx=Math.round(Math.cos(a)); this.dy=Math.round(Math.sin(a));
+      return;
+    }
+
+    // охота на живого врага — дальность зависит от агрессивности
+    if(nearEnemy && nearEnemy.size<this.size && dE<(20 + this.genes.aggression*30)){
+      const a=Math.atan2(nearEnemy.head().y-h.y,nearEnemy.head().x-h.x);
+      this.dx=Math.round(Math.cos(a)); this.dy=Math.round(Math.sin(a));
+      return;
+    }
+
+    // блуждание
+    if(Math.random()<0.15){
+      const dirs=[[1,0],[-1,0],[0,-1],[0,1],[1,-1],[-1,-1],[1,1],[-1,1]];
+      [this.dx,this.dy]=dirs[Math.floor(Math.random()*dirs.length)];
+    }
+    if(h.x<=1)this.dx=1; if(h.x>=COLS-2)this.dx=-1; if(h.y<=2)this.dy=1;
+  }
+
+  step(){
+    const h = this.head();
+    let nx = Math.max(0,Math.min(COLS-1, h.x+this.dx));
+    let ny = Math.max(1,Math.min(ROWS-1, h.y+this.dy));
+
+    // проверка трупа на клетке
+    for(let i=0;i<corpses.length;i++){
+      const cp = corpses[i];
+      if(!cp.alive) continue;
+      for(let si=0;si<cp.segs.length;si++){
+        const seg=cp.segs[si];
+        if(seg.x===nx&&seg.y===ny){
+          this.energy += 12;
+          cp.segs.splice(si,1);
+          if(cp.segs.length===0) cp.alive=false;
+          if(selectedCreature&&selectedCreature.id===this.id)
+            addCreatureLog('🍖 съел труп');
+          break;
+        }
+      }
+    }
+
+    // почва
+    if(soil[ny]&&soil[ny][nx]&&soil[ny][nx].solid){
+      const s=soil[ny][nx];
+      if(s.color!==this.color){
+        this.energy += s.stardust?25:9;
+        soil[ny][nx]=null;
+        if(selectedCreature&&selectedCreature.id===this.id)
+          addCreatureLog(s.stardust?'✨ съел звёздную пыль':'⛏ съел почву');
+      } else {
+        this.energy-=1.5;
+        this.dy=-1; nx=h.x; ny=Math.max(1,h.y-1);
+        if(soil[ny]&&soil[ny][nx]&&soil[ny][nx].solid){nx=h.x;ny=h.y;}
+      }
+    }
+
+    // столкновение с существами
+    for(let i=0;i<creatures.length;i++){
+      const en=creatures[i];
+      if(!en.alive||en===this||en.color===this.color) continue;
+      for(let seg of en.segments){
+        if(seg.x===nx&&seg.y===ny){
+          if(this.size>=en.size){
+            this.energy+=en.energy*0.7;
+            registerBattle(nx);
+            en.dieAsCorpse();
+            this.grow();
+            addLog('⚔ '+colorName(this.color)+' поглощает '+colorName(en.color)+'!');
+            if(selectedCreature&&selectedCreature.id===this.id)
+              addCreatureLog('⚔ поглотил '+colorName(en.color));
+          } else {
+            this.energy-=20;
+            if(selectedCreature&&selectedCreature.id===this.id)
+              addCreatureLog('💥 атакован '+colorName(en.color));
+          }
+          break;
+        }
+      }
+    }
+
+    this.segments.unshift({x:nx,y:ny});
+    if(this.segments.length>this.len) this.segments.pop();
+  }
+
+  grow(){
+    if(this.len<20){
+      this.len++;
+      this.energy-=25;
+      if(this.len>1) this.seekingColony=false;
+      // взросление — получает имя
+      if(this.len>=12 && !this.isAdult){
+        this.isAdult=true;
+        this.name=genAdultName();
+        addCreatureLog && selectedCreature && selectedCreature.id===this.id &&
+          addCreatureLog('🎓 повзрослел: '+this.name);
+      }
+      if(Math.random()<(geneticStorm?0.45:0.09)){
+        const si=Math.floor(Math.random()*this.len);
+        this.laterals.push({si,dx:0,dy:Math.random()<0.5?1:-1,len:1+Math.floor(Math.random()*2)});
+      }
+    }
+  }
+
+  reproduce(){
+    const mutRate = geneticStorm?0.5:0.13;
+    let col = this.color;
+    // считаем текущую долю мутантов
+    const totalAlive = creatures.filter(x=>x.alive).length;
+    const mutantAlive = creatures.filter(x=>x.alive && !STARTER_COLORS.has(x.color)).length;
+    const mutantFraction = totalAlive > 0 ? mutantAlive / totalAlive : 0;
+    const canMutate = mutantFraction < 0.30; // до 30% мутантов — эволюция не замирает
+    if(canMutate && Math.random()<mutRate){
+      const unused=PALETTE.filter(p=>!activeColors.has(p));
+      col=unused.length>0?unused[0]:PALETTE[Math.floor(Math.random()*PALETTE.length)];
+      activeColors.add(col);
+      addLog(`🧬 Мутация! Новый вид: ${colorName(col)}`);
+    }
+    const startLen = this.socialStatus==='mega'  ? 4+Math.floor(Math.random()*2) :
+                      this.socialStatus==='empire'? 3+Math.floor(Math.random()*2) :
+                      this.socialStatus==='colony'? 2 : 1;
+    const h=this.head();
+    const ox=Math.random()<0.5?3:-3;
+    const child=new Creature(
+      Math.max(1,Math.min(COLS-2, h.x+ox)),
+      Math.max(2,h.y-2), col, startLen
+    );
+    child.energy=60;
+    child.seekingColony=(startLen===1);
+    // передача генов: мутант получает свежие гены, потомок — немного изменённые родительские
+    if(col !== this.color){
+      child.genes = mutateGenes(defaultGenes(), 0.4); // мутант — широкие вариации
+      genePool[col] = {...child.genes};
+    } else {
+      child.genes = mutateGenes(this.genes, 0.05); // потомок — небольшой дрейф
+      genePool[col] = child.genes; // обновляем пул вида
+    }
+    creatures.push(child);
+    this.offspring++;
+    this.energy -= 30;
+    if(selectedCreature&&selectedCreature.id===this.id)
+      addCreatureLog('🥚 родил потомка ('+colorName(col)+')');
+
+    // империи дополнительно выпускают спору-горееда
+    if((this.socialStatus==='empire'||this.socialStatus==='mega') && Math.random()<0.35){
+      const sh = this.head();
+      const spore = new Spore(
+        Math.max(1,Math.min(COLS-2, sh.x + Math.floor(Math.random()*7)-3)),
+        Math.max(1, sh.y - 2),
+        this.color
+      );
+      spores.push(spore);
+    }
+  }
+
+  // смерть с созданием трупа (не сразу в почву)
+  dieAsCorpse(){
+    this.alive=false;
+    // разрываем мостик при смерти
+    for(let cr of creatures){ if(cr.bondedTo===this.id) cr.bondedTo=null; }
+    corpses.push(new Corpse(this.segments, this.color));
+    addLog(`💀 ${colorName(this.color)} (${this.size}сег.) пало`);
+  }
+
+  die(){
+    this.alive=false;
+    for(let x of creatures){ if(x.bondedTo===this.id) x.bondedTo=null; }
+    if(this.segments.length > 0){
+      const cx = Math.round(this.segments.reduce((s,seg)=>s+seg.x,0)/this.segments.length);
+      const cy = Math.round(this.segments.reduce((s,seg)=>s+seg.y,0)/this.segments.length);
+      const n = this.segments.length;
+      const minRadius = Math.ceil((n-5)/2);
+      const radius = Math.max(2, Math.floor(Math.sqrt(n) * 1.6), minRadius);
+      const slots = [];
+      for(let dx=0; dx<=radius+2; dx++){
+        for(let sign of (dx===0?[0]:[-1,1])){
+          const bx=cx+dx*sign; if(bx<0||bx>=COLS) continue;
+          const gy=getSoilBottom(bx, cy);
+          if(gy>=0) slots.push({bx,gy,dist:dx});
+        }
+      }
+      slots.sort((a,b)=>a.dist-b.dist);
+      const placed=new Set();
+      let count=0;
+      for(let s of slots){
+        if(count>=n) break;
+        const key=s.bx+'_'+s.gy;
+        if(placed.has(key)) continue;
+        placed.add(key);
+        setSoil(s.bx,s.gy,this.color);
+        count++;
+      }
+    }
+    if(Math.random()<0.15) addLog(`💀 ${colorName(this.color)} (${this.size}сег.) угасло`);
+  }
+}
+
+// ── УТИЛИТЫ ────────────────────────────────────────────────────────
+function addLog(msg){
+  logs.unshift(msg);
+  if(logs.length>60) logs.pop();
+  const el=document.getElementById('log-entries');
+  if(!el) return;
+  const div=document.createElement('div');
+  div.className='ll f';
+  div.textContent=msg;
+  el.insertBefore(div, el.firstChild);
+  const all=el.querySelectorAll('.ll');
+  all.forEach((d,i)=>{ d.className='ll'+(i===0?' f':i<4?' f2':''); });
+  if(el.children.length>60) el.removeChild(el.lastChild);
+}
+
+// ── ЛОГ ВЫБРАННОГО СУЩЕСТВА ────────────────────────────────────────
+let creatureLogs = []; // {id, msg}
+function addCreatureLog(msg){
+  if(!selectedCreature) return;
+  creatureLogs.unshift({id: selectedCreature.id, msg});
+  if(creatureLogs.length > 30) creatureLogs.pop();
+  const el = document.getElementById('creature-log');
+  if(!el) return;
+  // показываем только записи текущего существа
+  const div = document.createElement('div');
+  div.className = 'cl f';
+  div.textContent = msg;
+  el.insertBefore(div, el.firstChild);
+  const all = el.querySelectorAll('.cl');
+  all.forEach((d,i)=>{ d.className='cl'+(i===0?' f':i<3?' f2':''); });
+  if(el.children.length > 20) el.removeChild(el.lastChild);
+}
+
+// ── БАННЕР СОБЫТИЯ ─────────────────────────────────────────────────
+let eventBanner = null; // {msg, color, endCycle}
+function showBanner(msg, color, durationTicks){
+  eventBanner = { msg, color, endCycle: cycle + durationTicks };
+  const el = document.getElementById('event-banner');
+  if(!el) return;
+  el.style.display = 'block';
+  el.style.color = color;
+  el.style.borderColor = color + '55';
+  el.style.background = color + '18';
+  el.textContent = msg;
+}
+function updateBanner(){
+  if(!eventBanner) return;
+  if(cycle > eventBanner.endCycle){
+    eventBanner = null;
+    const el = document.getElementById('event-banner');
+    if(el) el.style.display = 'none';
+  }
+}
+const hexRgbCache = {};
+function hexRgb(hex){
+  if(hexRgbCache[hex]) return hexRgbCache[hex];
+  if(!hex||!hex.startsWith('#')) return hexRgbCache[hex]=[100,100,100];
+  return hexRgbCache[hex]=[parseInt(hex.slice(1,3),16),parseInt(hex.slice(3,5),16),parseInt(hex.slice(5,7),16)];
+}
+
+// ── РЕНДЕР ─────────────────────────────────────────────────────────
+function render(){
+  ctx.clearRect(0,0,W,H);
+  const alive = creatures.filter(cr=>cr.alive); // нужно для ореолов и HUD
+  const night = isNight();
+  const prog  = night ? (cycle%6000-4000)/2000 : (cycle%6000)/4000;
+
+  // небо — с учётом сезона
+  const season = getSeason();
+  const skyTop = drought?'#1c0600': night?'#010108':
+    season==='winter'?'#05080f': season==='autumn'?'#080610':'#040412';
+  const skyBot = drought?'#0d0300': night?'#020210':
+    season==='winter'?'#08101a': season==='autumn'?'#0a0818':'#060620';
+  const sg=ctx.createLinearGradient(0,0,0,GROUND_Y*CELL);
+  sg.addColorStop(0,skyTop); sg.addColorStop(1,skyBot);
+  ctx.fillStyle=sg; ctx.fillRect(0,0,W,GROUND_Y*CELL);
+
+  // звёзды ночью
+  if(night){
+    ctx.fillStyle='rgba(255,255,255,0.28)';
+    for(let i=0;i<40;i++)
+      ctx.fillRect((i*179+3)%W,(i*109+7)%(GROUND_Y*CELL),1,1);
+    // луна
+    const mx=W-80-prog*(W-160), my=30;
+    const mg=ctx.createRadialGradient(mx,my,0,mx,my,20);
+    mg.addColorStop(0,'rgba(200,210,255,0.18)'); mg.addColorStop(1,'rgba(200,210,255,0)');
+    ctx.fillStyle=mg; ctx.beginPath(); ctx.arc(mx,my,20,0,Math.PI*2); ctx.fill();
+  } else if(!drought){
+    const sx=60+prog*(W-120), sy=24;
+    const sg2=ctx.createRadialGradient(sx,sy,0,sx,sy,40);
+    sg2.addColorStop(0,'rgba(255,210,100,0.13)'); sg2.addColorStop(1,'rgba(255,210,100,0)');
+    ctx.fillStyle=sg2; ctx.beginPath(); ctx.arc(sx,sy,40,0,Math.PI*2); ctx.fill();
+  }
+
+  // зимний снег
+  if(season==='winter' && !night){
+    ctx.fillStyle='rgba(200,220,255,0.18)';
+    ctx.fillRect(0,0,W,H);
+    // снежинки — статичные чтобы не грузить Pi
+    ctx.fillStyle='rgba(255,255,255,0.25)';
+    for(let i=0;i<30;i++){
+      const fx=((i*173+cycle*0.4)%W);
+      const fy=((i*97 +cycle*0.6)%(GROUND_Y*CELL));
+      ctx.fillRect(fx,fy,1,1);
+    }
+  }
+  // осенний тёплый оттенок
+  if(season==='autumn' && !night){
+    ctx.fillStyle='rgba(80,30,0,0.07)';
+    ctx.fillRect(0,0,W,H);
+  }
+  // оверлей массового вымирания
+  if(extinctionLevel > 0.5){
+    const alpha = (extinctionLevel - 0.5) * 0.3;
+    ctx.fillStyle=`rgba(120,80,0,${alpha})`;
+    ctx.fillRect(0,0,W,H);
+  }
+  if(drought){
+    ctx.fillStyle=`rgba(200,80,0,${0.18+Math.sin(cycle*0.03)*0.06})`;
+    ctx.fillRect(0,0,W,H);
+    // горизонтальные волны жара
+    ctx.strokeStyle='rgba(255,120,0,0.08)';
+    ctx.lineWidth=2;
+    for(let hy=0;hy<H;hy+=18){
+      ctx.beginPath();
+      ctx.moveTo(0,hy+Math.sin(cycle*0.05+hy*0.1)*4);
+      ctx.lineTo(W,hy+Math.sin(cycle*0.05+hy*0.1+2)*4);
+      ctx.stroke();
+    }
+  }
+  if(geneticStorm){
+    ctx.fillStyle=`rgba(70,0,180,${0.12+Math.sin(cycle*0.18)*0.05})`;
+    ctx.fillRect(0,0,W,H);
+    // молнии раз в 30 тиков
+    if(cycle%60<3){
+      ctx.strokeStyle=`rgba(180,100,255,0.6)`;
+      ctx.lineWidth=1;
+      for(let li=0;li<3;li++){
+        const lx=Math.random()*W;
+        ctx.beginPath(); ctx.moveTo(lx,0);
+        let ly=0;
+        while(ly<H){
+          ly+=20+Math.random()*30;
+          ctx.lineTo(lx+(Math.random()-0.5)*40,ly);
+        }
+        ctx.stroke();
+      }
+    }
+  }
+  // потоп — синяя вода поднимается снизу
+  if(flood && floodLevel>0){
+    const wy = H - floodLevel;
+    const wg = ctx.createLinearGradient(0,wy,0,H);
+    wg.addColorStop(0,'rgba(30,80,180,0.18)'); wg.addColorStop(1,'rgba(10,40,120,0.55)');
+    ctx.fillStyle=wg; ctx.fillRect(0,wy,W,H-wy);
+    // рябь
+    ctx.strokeStyle='rgba(80,160,255,0.12)';
+    ctx.lineWidth=1;
+    for(let wi=0;wi<W;wi+=30){
+      ctx.beginPath();
+      ctx.moveTo(wi,wy+Math.sin((cycle+wi)*0.05)*3);
+      ctx.lineTo(wi+20,wy+Math.sin((cycle+wi+10)*0.05)*3);
+      ctx.stroke();
+    }
+  }
+  // ночное затемнение
+  if(night){
+    ctx.fillStyle=`rgba(0,0,10,${0.25+prog*0.15})`;
+    ctx.fillRect(0,0,W,H);
+  }
+
+  // почва — кешируем цвет в объекте чтобы не пересчитывать каждый кадр
+  for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
+    const s=soil[y]&&soil[y][x];
+    if(!s||!s.solid) continue;
+    if(s.stardust){
+      ctx.fillStyle=`rgba(255,235,180,${0.35+Math.sin(cycle*0.25+x*0.5)*0.18})`;
+      s._css = null; // stardust анимированный — не кешируем
+    } else if(!s._css) {
+      if(s.color){
+        const[r,g,b]=hexRgb(s.color);
+        const sh=s.shade||0.42;
+        s._css=`rgb(${Math.floor(r*sh)},${Math.floor(g*sh)},${Math.floor(b*sh)})`;
+      } else {
+        const d=(y-GROUND_Y)/10, v=Math.floor(14+d*8);
+        s._css=`rgb(${v},${v+2},${v+4})`;
+      }
+      ctx.fillStyle=s._css;
+    } else {
+      ctx.fillStyle=s._css;
+    }
+    ctx.fillRect(x*CELL,y*CELL,CELL,CELL);
+  }
+
+  // территория империй — отключена на Pi (дорогой проход ROWS*COLS с rgba)
+
+  // трупы
+  for(let cp of corpses){
+    if(!cp.alive) continue;
+    const alpha=Math.min(0.7, cp.timer/120*0.7);
+    const[r,g,b]=hexRgb(cp.color);
+    ctx.fillStyle=`rgba(${r},${g},${b},${alpha})`;
+    for(let seg of cp.segs){
+      ctx.fillRect(seg.x*CELL+1,seg.y*CELL+1,CELL-2,CELL-2);
+    }
+  }
+
+  // споры-санитары
+  for(let sp of spores){
+    if(!sp.alive) continue;
+    const[r,g,b] = hexRgb(sp.color);
+    const pulse = 0.5 + Math.sin(cycle*0.2 + sp.id)*0.4;
+    // если наелась трупов — светится ярче (близко к метаморфозу)
+    const mature = sp.corpseEaten >= 3 && sp.energy >= 80;
+    ctx.fillStyle = mature
+      ? `rgba(255,255,180,${pulse*0.9})`
+      : `rgba(${r},${g},${b},${pulse*0.6})`;
+    ctx.fillRect(sp.x*CELL, sp.y*CELL, CELL, CELL);
+    ctx.fillStyle = mature
+      ? `rgba(255,220,50,${pulse*0.8})`
+      : `rgba(255,255,255,${pulse*0.5})`;
+    ctx.fillRect(sp.x*CELL+2, sp.y*CELL+2, CELL-4, CELL-4);
+  }
+
+  // мостики между партнёрами
+  const drawnBonds = new Set();
+  for(let cr of creatures){
+    if(!cr.alive || !cr.bondedTo) continue;
+    const partner = creatures.find(x=>x.id===cr.bondedTo&&x.alive);
+    if(!partner) continue;
+    const bondKey = [Math.min(cr.id,partner.id), Math.max(cr.id,partner.id)].join('-');
+    if(drawnBonds.has(bondKey)) continue;
+    drawnBonds.add(bondKey);
+
+    const h1=cr.head(), h2=partner.head();
+    const dist=Math.hypot(h1.x-h2.x,h1.y-h2.y);
+    if(dist>25) continue; // слишком далеко — мостик не тянем
+
+    const[r,g,b]=hexRgb(cr.color);
+    // пульсирующая яркость
+    const pulse=0.25+Math.sin(cycle*0.05+cr.id)*0.1;
+
+    // рисуем линию мостика по шагам
+    const steps=Math.ceil(dist);
+    for(let s=1;s<steps;s++){
+      const t=s/steps;
+      const mx=Math.round(h1.x+(h2.x-h1.x)*t);
+      const my=Math.round(h1.y+(h2.y-h1.y)*t);
+      // толщина зависит от статуса
+      const bw = cr.socialStatus==='mega'?3:cr.socialStatus==='empire'?2:1;
+      ctx.fillStyle=`rgba(${r},${g},${b},${pulse})`;
+      ctx.fillRect(mx*CELL+CELL/2-bw/2, my*CELL+CELL/2-bw/2, bw, bw);
+    }
+
+    // узловые точки на концах мостика
+    ctx.fillStyle=`rgba(${r},${g},${b},${pulse+0.1})`;
+    ctx.fillRect(h1.x*CELL+CELL/2-1,h1.y*CELL+CELL/2-1,3,3);
+    ctx.fillRect(h2.x*CELL+CELL/2-1,h2.y*CELL+CELL/2-1,3,3);
+  }
+
+  // существа
+  ctx.shadowBlur=0;
+  for(let cr of creatures){
+    if(!cr.alive) continue;
+    const alpha=Math.min(1, 0.3+cr.energy/100) * (cr.weight ? Math.min(1, 0.5 + cr.weight/20) : 1);
+
+    // шлейф движения
+    for(let t of cr.trail){
+      const ta=Math.max(0, (12-t.age)/12*0.25);
+      const[r,g,b]=hexRgb(cr.color);
+      ctx.fillStyle=`rgba(${r},${g},${b},${ta})`;
+      ctx.fillRect(t.x*CELL+2,t.y*CELL+2,CELL-4,CELL-4);
+    }
+    // ночной анабиоз — немного тусклее
+    const nightDim = night ? 0.65 : 1.0;
+
+    for(let i=cr.segments.length-1;i>=0;i--){
+      const seg=cr.segments[i];
+      const isHead=i===0;
+      if(cr.inEmpire&&isHead){ /* shadowBlur отключён для Pi */ }
+      const br=isHead?1.0:Math.max(0.4,0.9-i*0.022);
+      const[r,g,b]=hexRgb(cr.color);
+      ctx.fillStyle=`rgba(${Math.floor(r*br*nightDim)},${Math.floor(g*br*nightDim)},${Math.floor(b*br*nightDim)},${alpha})`;
+      const p=isHead?0:1;
+      // эмбрион мигает
+      if(cr.isEmbryo && (cycle%20)<10){ ctx.fillStyle='rgba(255,255,255,0.4)'; }
+      ctx.fillRect(seg.x*CELL+p,seg.y*CELL+p,CELL-p*2,CELL-p*2);
+      ctx.shadowBlur=0;
+    }
+
+    // боковые ветви
+    for(let br of cr.laterals){
+      if(br.si>=cr.segments.length) continue;
+      const base=cr.segments[br.si];
+      for(let bi=1;bi<=br.len;bi++){
+        const bx=base.x+br.dx*bi, by=base.y+br.dy*bi;
+        const[r,g,b]=hexRgb(cr.color);
+        ctx.fillStyle=`rgba(${Math.floor(r*0.65)},${Math.floor(g*0.65)},${Math.floor(b*0.65)},${alpha*0.8})`;
+        ctx.fillRect(bx*CELL+1,by*CELL+1,CELL-2,CELL-2);
+        ctx.fillStyle='rgba(215,215,55,0.7)';
+        ctx.fillRect(bx*CELL+3,by*CELL+3,CELL-6,CELL-6);
+      }
+    }
+
+    // глубинный оттенок: лёгкие чуть светлее, тяжёлые темнее
+    const depthTint = cr.head ? Math.max(0.6, 1 - cr.head().y / ROWS * 0.5) : 1;
+
+    // глаза (ночью — светятся)
+    const h=cr.head();
+    ctx.fillStyle=night?`rgba(255,200,100,0.9)`:'rgba(255,255,255,0.88)';
+    ctx.fillRect(h.x*CELL+2,h.y*CELL+2,2,2);
+    ctx.fillRect(h.x*CELL+CELL-4,h.y*CELL+2,2,2);
+
+    // ── ОБВОДКА ГОЛОВЫ по статусу (дёшево — один strokeRect) ──
+    if(cr.socialStatus !== 'solo'){
+      const ss = cr.socialStatus;
+      // colony=синий, empire=оранжевый, mega=белый
+      const oc = ss==='mega'   ? `rgba(255,255,255,0.85)` :
+                 ss==='empire' ? `rgba(255,160,40,0.85)`  :
+                                 `rgba(80,140,255,0.75)`;
+      ctx.strokeStyle = oc;
+      ctx.lineWidth = ss==='mega' ? 2 : 1;
+      ctx.strokeRect(h.x*CELL+0.5, h.y*CELL+0.5, CELL-1, CELL-1);
+
+      // ── ЗНАЧОК НАД ГОЛОВОЙ ──
+      const ix = h.x*CELL + CELL/2;
+      const iy = h.y*CELL - 3;
+      ctx.fillStyle = oc;
+      if(ss==='colony'){
+        // квадрат 3×3
+        ctx.fillRect(ix-1.5, iy-1.5, 3, 3);
+      } else if(ss==='empire'){
+        // ромб (4 треугольника из центра) — 4 fillRect по диагонали
+        ctx.fillRect(ix-1, iy-3, 2, 2); // верх
+        ctx.fillRect(ix-1, iy+1, 2, 2); // низ
+        ctx.fillRect(ix-3, iy-1, 2, 2); // лево
+        ctx.fillRect(ix+1, iy-1, 2, 2); // право
+      } else {
+        // мега — крест 5 точек (звезда)
+        ctx.fillRect(ix-1, iy-1, 3, 3); // центр
+        ctx.fillRect(ix-1, iy-4, 2, 2); // верх
+        ctx.fillRect(ix-1, iy+2, 2, 2); // низ
+        ctx.fillRect(ix-4, iy-1, 2, 2); // лево
+        ctx.fillRect(ix+2, iy-1, 2, 2); // право
+      }
+    }
+
+    // ореол — рисуется отдельным проходом до существ
+
+    // вспышка войны — красный мерцающий контур
+    if(cr.atWar){
+      const warPulse=Math.sin(cycle*0.3+cr.id)*0.5+0.5;
+      ctx.strokeStyle=`rgba(255,60,60,${warPulse*0.8})`;
+      ctx.lineWidth=1.5;
+      ctx.strokeRect(h.x*CELL+0.5,h.y*CELL+0.5,CELL-1,CELL-1);
+    }
+
+    // индикатор энергии (тонкая полоска под головой)
+    const energyPct=Math.min(1,cr.energy/150);
+    const barW=Math.round(energyPct*(CELL-2));
+    const energyColor=energyPct>0.6?'rgba(80,220,80,0.7)':energyPct>0.3?'rgba(220,180,40,0.7)':'rgba(220,60,60,0.8)';
+    ctx.fillStyle='rgba(0,0,0,0.4)';
+    ctx.fillRect(h.x*CELL, h.y*CELL+CELL-2, CELL, 2);
+    ctx.fillStyle=energyColor;
+    ctx.fillRect(h.x*CELL+1, h.y*CELL+CELL-2, barW, 2);
+  }
+
+  // ── ЛАЗЕРЫ ──
+  for(let l of lasers){
+    if(l.timer<=0) continue;
+    const alpha = l.timer / (l.isMega ? 10 : 8);
+    const[r,g,b]=hexRgb(l.color);
+    // сам луч — яркая линия
+    ctx.strokeStyle=`rgba(${r},${g},${b},${alpha*0.9})`;
+    ctx.lineWidth=l.isMega?2.5:1.5;
+    ctx.beginPath();
+    ctx.moveTo(l.x1*CELL+CELL/2, l.y1*CELL+CELL/2);
+    ctx.lineTo(l.x2*CELL+CELL/2, l.y2*CELL+CELL/2);
+    ctx.stroke();
+    // свечение вокруг — широкая полупрозрачная линия
+    ctx.strokeStyle=`rgba(${r},${g},${b},${alpha*0.25})`;
+    ctx.lineWidth=l.isMega?7:4;
+    ctx.beginPath();
+    ctx.moveTo(l.x1*CELL+CELL/2, l.y1*CELL+CELL/2);
+    ctx.lineTo(l.x2*CELL+CELL/2, l.y2*CELL+CELL/2);
+    ctx.stroke();
+    // вспышка в точке попадания
+    ctx.fillStyle=`rgba(255,255,255,${alpha*0.6})`;
+    ctx.fillRect(l.x2*CELL, l.y2*CELL, CELL, CELL);
+  }
+
+  // левиафан — рисуется поверх существ
+  if(leviathan && leviathan.alive) leviathan.render(ctx);
+
+  // вспышка метеорита
+  if(meteorFlash && meteorFlash.timer>0){
+    const mt=meteorFlash.timer/25;
+    const mg=ctx.createRadialGradient(meteorFlash.x,0,0,meteorFlash.x,H*0.3,H*0.5);
+    mg.addColorStop(0,`rgba(255,240,180,${mt*0.7})`);
+    mg.addColorStop(0.4,`rgba(255,120,40,${mt*0.4})`);
+    mg.addColorStop(1,'rgba(255,60,0,0)');
+    ctx.fillStyle=mg; ctx.fillRect(0,0,W,H);
+    meteorFlash.timer--;
+    if(meteorFlash.timer<=0) meteorFlash=null;
+  }
+
+  // ── ПОДСВЕТКА СТРУКТУР (клик на счётчик) ──
+  if(highlightType && cycle <= highlightEnd){
+    const flash = Math.sin((cycle - (highlightEnd - HIGHLIGHT_DURATION)) * 0.35);
+    const useBlue = flash > 0;
+    // перебираем кластеры нужного типа
+    const sp3 = new Set(alive.map(x=>x.color));
+    for(let col of sp3){
+      const grp = alive.filter(x=>x.color===col && x.socialStatus===highlightType);
+      if(!grp.length) continue;
+      const visited3 = new Set();
+      for(let i=0;i<grp.length;i++){
+        if(visited3.has(i)) continue;
+        const cl=[grp[i]]; visited3.add(i);
+        for(let j=i+1;j<grp.length;j++){
+          if(visited3.has(j)) continue;
+          if(Math.hypot(grp[i].head().x-grp[j].head().x,
+                        grp[i].head().y-grp[j].head().y)<28){
+            cl.push(grp[j]); visited3.add(j);
+          }
+        }
+        // определяем тип
+        const clStatus = cl.some(x=>x.socialStatus==='mega')  ? 'mega' :
+                         cl.some(x=>x.socialStatus==='empire') ? 'empire' : 'colony';
+        if(clStatus !== highlightType) continue;
+        // для колоний требуем минимум 2, для империй и мег — достаточно 1
+
+        // центр масс
+        const cx4 = cl.reduce((s,x)=>s+x.head().x,0)/cl.length;
+        const cy4 = cl.reduce((s,x)=>s+x.head().y,0)/cl.length;
+        const radius = 30 + cl.length * 3;
+
+        // мигаем сине-красным
+        const flashColor = useBlue ? '80,120,255' : '255,60,80';
+        const flashAlpha = 0.12 + Math.abs(flash) * 0.18;
+        const fg = ctx.createRadialGradient(cx4*CELL,cy4*CELL,0, cx4*CELL,cy4*CELL,radius);
+        fg.addColorStop(0,   `rgba(${flashColor},${flashAlpha*1.5})`);
+        fg.addColorStop(0.6, `rgba(${flashColor},${flashAlpha})`);
+        fg.addColorStop(1,   `rgba(${flashColor},0)`);
+        ctx.fillStyle=fg;
+        ctx.beginPath(); ctx.arc(cx4*CELL,cy4*CELL,radius,0,Math.PI*2); ctx.fill();
+      }
+    }
+    // сброс после окончания
+    if(cycle > highlightEnd) highlightType = null;
+  }
+
+  // HUD обновляем раз в 30 тиков — DOM-операции дорогие
+  if(cycle % 30 !== 0) return;
+
+  // обновляем карточку выбранного существа
+  if(selectedCreature && !selectedCreature.alive){
+    selectedCreature=null;
+    const card=document.getElementById('creature-card');
+    const clog=document.getElementById('creature-log');
+    if(card){ card.className=''; card.innerHTML='· существо погибло ·'; }
+    if(clog) clog.innerHTML='';
+  } else if(selectedCreature){
+    updateCreatureCard();
+  }
+
+  // ── HUD ──────────────────────────────────────────────
+  // 1. Список живых
+  const aliveList = [];
+  for(let i=0;i<creatures.length;i++){
+    if(creatures[i].alive) aliveList.push(creatures[i]);
+  }
+
+  // 2. Сутки
+  document.getElementById('sCycle').textContent = Math.floor(cycle/3000);
+
+  // 3. Существа
+  document.getElementById('sCreatures').textContent = aliveList.length;
+
+  // 4. Споры
+  let sporeCount=0;
+  for(let i=0;i<spores.length;i++) if(spores[i].alive) sporeCount++;
+  document.getElementById('sSpores').textContent = sporeCount;
+
+  // 5. Виды — уникальные цвета
+  const speciesSet = new Set();
+  for(let i=0;i<aliveList.length;i++) speciesSet.add(aliveList[i].color);
+  document.getElementById('sSpecies').textContent = speciesSet.size;
+
+  // 6. Мутанты
+  let mutCount=0;
+  for(let i=0;i<aliveList.length;i++){
+    if(!STARTER_COLORS.has(aliveList[i].color)) mutCount++;
+  }
+  const mutPct = aliveList.length>0 ? Math.round(mutCount/aliveList.length*100) : 0;
+  document.getElementById('sMutants').textContent = mutCount+' ('+mutPct+'%)';
+
+  // 7. Колонии / Империи / Мегаструктуры
+  let nColony=0, nEmpire=0, nMega=0;
+  const seenColors={};
+  for(let i=0;i<aliveList.length;i++){
+    const cr2=aliveList[i];
+    const ss=cr2.socialStatus||'solo';
+    if(!seenColors[cr2.color]) seenColors[cr2.color]={colony:false,empire:false,mega:false};
+    if(ss==='colony') seenColors[cr2.color].colony=true;
+    if(ss==='empire') seenColors[cr2.color].empire=true;
+    if(ss==='mega')   seenColors[cr2.color].mega=true;
+  }
+  for(let col2 in seenColors){
+    if(seenColors[col2].mega)   nMega++;
+    if(seenColors[col2].empire) nEmpire++;
+    if(seenColors[col2].colony) nColony++;
+  }
+  document.getElementById('sColonies').textContent = nColony;
+  document.getElementById('sEmpires').textContent  = nEmpire;
+  document.getElementById('sMegas').textContent    = nMega;
+  document.getElementById('sCataclysms').textContent =
+    `${cataclysms.meteor}/${cataclysms.drought}/${cataclysms.storm}/${cataclysms.flood}/${cataclysms.leviathan}`;
+
+  // уровень вымирания
+  if(extinctionLevel > 0.3){
+    const pct = Math.round(extinctionLevel*100);
+    document.getElementById('sPhase').innerHTML =
+      `<b style="color:${extinctionLevel>0.8?'#ff6600':'#aa8800'}">☠ Вымирание ${pct}%</b>`;
+  }
+
+  const phaseEl=document.getElementById('sPhase');
+  phaseEl.innerHTML=night
+    ? '<b style="color:#8888ff">🌙 Ночь</b>'
+    : '<b style="color:#ccaa00">☀ День</b>';
+
+  const seasonEl=document.getElementById('sSeason');
+  const sn=getSeason();
+  const scols={spring:'#88cc88',summer:'#cccc44',autumn:'#cc8844',winter:'#8899cc'};
+  seasonEl.innerHTML=`<b style="color:${scols[sn]}">${SEASON_NAMES[sn]}</b>`;
+
+  // ── ГРАФИК ПОПУЛЯЦИИ ──
+  const gc=document.getElementById('pop-graph');
+  if(gc){
+    const gx=gc.getContext('2d');
+    gx.fillStyle='#06060a'; gx.fillRect(0,0,180,60);
+    // находим максимум по всей истории
+    let maxPop=1;
+    for(let col of activeColors){
+      const h2=popHistory[col]||[];
+      for(let v of h2) if(v>maxPop) maxPop=v;
+    }
+    // рисуем линию каждого вида
+    for(let col of activeColors){
+      const h2=popHistory[col];
+      if(!h2||h2.length<2) continue;
+      const[r,g,b]=hexRgb(col);
+      gx.strokeStyle=`rgba(${r},${g},${b},0.8)`;
+      gx.lineWidth=1;
+      gx.beginPath();
+      for(let i=0;i<h2.length;i++){
+        const px=i*(180/POP_HISTORY_LEN);
+        const py=58 - (h2[i]/maxPop)*54;
+        i===0?gx.moveTo(px,py):gx.lineTo(px,py);
+      }
+      gx.stroke();
+    }
+    // подпись
+    gx.fillStyle='rgba(100,100,120,0.7)';
+    gx.font='8px monospace';
+    gx.fillText('ПОПУЛЯЦИЯ',4,8);
+  }
+}
+
+// ── ТИК ────────────────────────────────────────────────────────────
+
+function genAdultName(){
+  const f = NAMES_FIRST[Math.floor(Math.random()*NAMES_FIRST.length)];
+  const p = NAMES_PATRON[Math.floor(Math.random()*NAMES_PATRON.length)];
+  return f+' '+p;
+}
+function genEmpireName(){
+  const n = EMPIRE_NAMES[Math.floor(Math.random()*EMPIRE_NAMES.length)];
+  return 'Империя '+n;
+}
+function genMegaName(){
+  const a = MEGA_LETTERS[Math.floor(Math.random()*MEGA_LETTERS.length)];
+  const b = MEGA_LETTERS[Math.floor(Math.random()*MEGA_LETTERS.length)];
+  const c = MEGA_LETTERS[Math.floor(Math.random()*MEGA_LETTERS.length)];
+  const n = 10+Math.floor(Math.random()*90);
+  return a+b+c+'-'+n;
+}
+function genColonyName(){
+  colonyCounter++;
+  return 'Колония-'+colonyCounter;
+}
+// Запускается раз в 60 тиков. Union-Find по цвету.
+// Гистерезис: понижение статуса только после 2 подряд циклов ниже порога.
+const CLUSTER_RADIUS = 22;    // клетки — дистанция связи между членами
+const THRESHOLDS = { mega:18, empire:8, colony:3 }; // мин. размер кластера
+let clusterDowngrade = {}; // clusterDowngrade[id] = число циклов ниже порога
+
+function detectClusters(){
+  // собираем только живых взрослых (≥12 сег)
+  const adults = creatures.filter(x=>x.alive && x.size>=12);
+
+  // Union-Find
+  const parent = {};
+  for(let cr of adults) parent[cr.id] = cr.id;
+
+  function find(id){
+    while(parent[id]!==id) { parent[id]=parent[parent[id]]; id=parent[id]; }
+    return id;
+  }
+  function union(a,b){ parent[find(a)]=find(b); }
+
+  // соединяем существ одного цвета в радиусе CLUSTER_RADIUS
+  for(let i=0;i<adults.length;i++){
+    for(let j=i+1;j<adults.length;j++){
+      const a=adults[i], b=adults[j];
+      if(a.color!==b.color) continue;
+      if(find(a.id)===find(b.id)) continue; // уже в одном кластере
+      const d=Math.hypot(a.head().x-b.head().x, a.head().y-b.head().y);
+      if(d<CLUSTER_RADIUS) union(a.id,b.id);
+    }
+  }
+
+  // считаем размер каждого кластера
+  const clusterSize = {};
+  for(let cr of adults){
+    const root=find(cr.id);
+    clusterSize[root]=(clusterSize[root]||0)+1;
+  }
+
+  // присваиваем статус с гистерезисом
+  for(let cr of adults){
+    const root=find(cr.id);
+    const sz=clusterSize[root]||1;
+    const prevStatus=cr.socialStatus;
+
+    let newStatus;
+    if     (sz>=THRESHOLDS.mega)   newStatus='mega';
+    else if(sz>=THRESHOLDS.empire) newStatus='empire';
+    else if(sz>=THRESHOLDS.colony) newStatus='colony';
+    else                           newStatus='solo';
+
+    // повышение — мгновенное
+    // понижение — только после 2 циклов подряд
+    if(newStatus < prevStatus || // строковое сравнение не работает, используем веса
+       statusWeight(newStatus) < statusWeight(prevStatus)){
+      clusterDowngrade[cr.id]=(clusterDowngrade[cr.id]||0)+1;
+      if(clusterDowngrade[cr.id]>=2) cr.socialStatus=newStatus;
+      else cr.socialStatus=prevStatus; // держим старый статус ещё цикл
+    } else {
+      clusterDowngrade[cr.id]=0;
+      cr.socialStatus=newStatus;
+    }
+
+    cr.inEmpire=(cr.socialStatus==='empire'||cr.socialStatus==='mega');
+
+    // имя кластера — присваивается при формировании, хранится по root
+    if(cr.socialStatus!=='solo'){
+      if(!clusterNames[root]){
+        if(cr.socialStatus==='mega')         clusterNames[root]=genMegaName();
+        else if(cr.socialStatus==='empire')  clusterNames[root]=genEmpireName();
+        else                                 clusterNames[root]=genColonyName();
+        addLog('📛 '+clusterNames[root]+' ('+colorName(cr.color)+') сформирована');
+      }
+    }
+    cr.clusterName = (cr.socialStatus==='solo') ? null : (clusterNames[root]||null);
+
+    // логируем смену статуса
+    if(prevStatus!==cr.socialStatus){
+      if(cr.socialStatus==='mega')
+        addLog('👑 МЕГАСТРУКТУРА '+colorName(cr.color)+' сформирована!');
+      else if(prevStatus==='solo'&&cr.socialStatus==='colony')
+        addLog('🔵 Колония '+colorName(cr.color)+' образована');
+      if(selectedCreature&&selectedCreature.id===cr.id)
+        addCreatureLog('→ стал: '+{solo:'одиночкой',colony:'колонией',empire:'империей',mega:'мегаструктурой'}[cr.socialStatus]);
+    }
+  }
+
+  // молодые всегда solo
+  for(let cr of creatures){
+    if(cr.alive&&cr.size<12){
+      cr.socialStatus='solo';
+      cr.inEmpire=false;
+    }
+  }
+}
+function statusWeight(s){ return {solo:0,colony:1,empire:2,mega:3}[s]||0; }
+
+function tick(){
+  cycle++;
+  coolBattleHeat();
+  updateBanner();
+
+  // === ГРАВИТАЦИЯ ПОЧВЫ — висящие блоки падают вниз ===
+  if(cycle % 150 === 0){
+    // проходим снизу вверх — блок падает если под ним пусто
+    for(let y=ROWS-2; y>=0; y--){
+      for(let x=0; x<COLS; x++){
+        if(!(soil[y]&&soil[y][x]&&soil[y][x].solid)) continue;
+        // проверяем клетку ниже
+        if(soil[y+1]&&soil[y+1][x]&&soil[y+1][x].solid) continue;
+        // под блоком пусто — падаем вниз до первой опоры
+        const falling = soil[y][x];
+        soil[y][x] = null;
+        // находим куда упасть
+        let landY = y+1;
+        while(landY+1 < ROWS && !(soil[landY+1]&&soil[landY+1][x]&&soil[landY+1][x].solid)){
+          landY++;
+        }
+        soil[landY][x] = falling;
+        if(falling._css) falling._css = null; // сбрасываем кеш
+      }
+    }
+  }
+  if(cycle % 120 === 0){
+    // ТЕКТОНИКА убрана — она создавала почву из воздуха
+    // Теперь только осадки: блоки перемещаются, не создаются
+
+    // ОСАДКИ: верхушки высоких гор осыпаются на соседей
+    const erodeCount = Math.floor(COLS * 0.03);
+    for(let i=0;i<erodeCount;i++){
+      const ex = Math.floor(Math.random()*COLS);
+      const top = getSoilTop(ex);
+      if(top < GROUND_Y - 4 && soil[top] && soil[top][ex]){
+        const savedColor = soil[top][ex].color;
+        soil[top][ex] = null;
+        const nx = ex + (Math.random()<0.5 ? -1 : 1);
+        if(nx>=0 && nx<COLS){
+          const nTop = getSoilTop(nx);
+          if(nTop >= top){
+            setSoil(nx, nTop-1, savedColor);
+          }
+        }
+      }
+    }
+  }
+
+  // === ЧИСТКА ПАМЯТИ — мёртвые объекты ===
+  if(cycle % 3000 === 0){
+    creatures = creatures.filter(cr=>cr.alive);
+    spores    = spores.filter(sp=>sp.alive);
+    corpses   = corpses.filter(cp=>cp.alive && cp.segs.length > 0);
+    const liveMegaColors = new Set(creatures.filter(x=>x.alive&&x.socialStatus==='mega').map(x=>x.color));
+    for(let col in megaPositions){ if(!liveMegaColors.has(col)) delete megaPositions[col]; }
+  }
+
+  // === МАССОВОЕ ВЫМИРАНИЕ — 95% экрана в трупах ===
+  if(cycle % 120 === 0){
+    // считаем суммарные сегменты живых трупов
+    let totalCorpseSegs = 0;
+    for(let cp of corpses) if(cp.alive) totalCorpseSegs += cp.segs.length;
+    const LIVE_AREA = COLS * GROUND_Y; // клеток в живой зоне
+    extinctionLevel = Math.min(1, totalCorpseSegs / (LIVE_AREA * 0.95));
+
+    if(extinctionLevel >= 1 && !extinctionActive){
+      extinctionActive = true;
+      addLog('💀 МАССОВОЕ ВЫМИРАНИЕ. Трупы заполнили мир...');
+      showBanner('💀 МАССОВОЕ ВЫМИРАНИЕ', '#886600', 2000);
+    }
+
+    if(extinctionActive){
+      // 1. Споры едят трупы ВДВОЕ быстрее — увеличиваем их скорость временно
+      for(let sp of spores){
+        if(!sp.alive) continue;
+        sp.stepTimer += 3; // ускоряем
+      }
+
+      // 2. Из каждого трупа с шансом 15% рождается новая спора-санитар
+      if(Math.random() < 0.3){
+        const liveCorpses = corpses.filter(cp=>cp.alive&&cp.segs.length>0);
+        const sample = liveCorpses.slice(0, Math.min(5, liveCorpses.length));
+        for(let cp of sample){
+          if(Math.random()<0.15 && spores.length < 400){
+            const spSeg = cp.segs[Math.floor(Math.random()*cp.segs.length)];
+            const sp = new Spore(spSeg.x, Math.max(1, spSeg.y-1), cp.color);
+            spores.push(sp);
+          }
+        }
+      }
+
+      // 3. Если трупов стало меньше 60% — событие заканчивается, рождаются редкие виды
+      if(extinctionLevel < 0.6){
+        extinctionActive = false;
+
+        // Рождение обычных видов из трупов
+        const liveCorpses2 = corpses.filter(cp=>cp.alive&&cp.segs.length>0);
+        let bornNormal = 0;
+        for(let cp of liveCorpses2.slice(0, 10)){
+          if(Math.random()<0.4){
+            const seg=cp.segs[0];
+            const child=new Creature(seg.x,Math.max(2,seg.y-1),cp.color,2);
+            child.energy=100; child.seekingColony=true;
+            creatures.push(child); bornNormal++;
+          }
+        }
+
+        // Рождение РЕДКИХ видов (шанс зависит от масштаба вымирания)
+        const unusedRare = RARE_PALETTE.filter(p=>!activeColors.has(p));
+        const rareCount = Math.min(2, unusedRare.length);
+        for(let ri=0; ri<rareCount; ri++){
+          if(Math.random() < 0.6){ // 60% шанс на каждый редкий вид
+            const rCol = unusedRare[ri];
+            activeColors.add(rCol);
+            rareColors.add(rCol);
+            // редкий вид получает усиленные гены выживаемости
+            genePool[rCol] = {
+              aggression:    0.3 + Math.random()*0.4,
+              metabolism:    0.4 + Math.random()*0.3, // низкий метаболизм = живучий
+              photoRate:     1.5 + Math.random()*0.5, // высокий фотосинтез
+              socialTendency:0.6 + Math.random()*0.4,
+            };
+            // рождается маленькая группа в разных местах экрана
+            const spawnCount = 3 + Math.floor(Math.random()*4);
+            for(let k=0; k<spawnCount; k++){
+              const sx = 5 + Math.floor(Math.random()*(COLS-10));
+              const top = getSoilTop(sx);
+              const child = new Creature(sx, Math.max(2, top-2), rCol, 2);
+              child.energy = 180;
+              child.seekingColony = true;
+              creatures.push(child);
+            }
+            addLog('🌟 РЕДКИЙ ВИД: '+colorName(rCol)+' возник из пепла!');
+          }
+        }
+        if(bornNormal>0) addLog('🌱 Из вымирания возродилось '+bornNormal+' существ');
+      }
+    }
+  }
+  // видовой баланс + детектирование кластеров раз в 60 тиков
+  if(cycle % 60 === 0){
+    const totalPop = creatures.filter(x=>x.alive).length || 1;
+    const colorCount = {};
+    for(let x of creatures) if(x.alive) colorCount[x.color]=(colorCount[x.color]||0)+1;
+    for(let x of creatures) if(x.alive) x.speciesFraction=(colorCount[x.color]||0)/totalPop;
+
+    detectClusters();
+
+    // обновляем историю популяции для графика
+    popHistoryTick++;
+    for(let col of activeColors){
+      if(!popHistory[col]) popHistory[col]=[];
+      popHistory[col].push(colorCount[col]||0);
+      if(popHistory[col].length > POP_HISTORY_LEN) popHistory[col].shift();
+    }
+  }
+
+  // смена сезона — сообщение в лог
+  if(cycle % 6000 === 1){
+    const s = getSeason();
+    addLog(SEASON_NAMES[s] + ' наступила');
+    // зима убивает слабейших — дополнительное давление
+    if(s === 'winter'){
+      for(let cr of creatures){
+        if(cr.alive && cr.energy < 40 && Math.random() < 0.3) cr.die();
+      }
+    }
+  }
+  // территория постепенно угасает без присутствия империй
+  if(cycle%40===0){
+    for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
+      if(territory[y]&&territory[y][x]&&Math.random()<0.05) territory[y][x]=null;
+    }
+  }
+
+  if(droughtTimer>0){droughtTimer--;if(droughtTimer===0){drought=false;addLog('☁ Засуха окончилась.');}}
+  if(stormTimer>0)  {stormTimer--;  if(stormTimer===0)  {geneticStorm=false;addLog('🌙 Шторм утих.');}}
+  // потоп
+  if(flood){
+    floodTimer--;
+    // вода поднимается первые 300 тиков, затем спадает
+    const risePhase = floodTimer > 400;
+    if(risePhase) floodLevel = Math.min(H*0.55, floodLevel+1.2);
+    else          floodLevel = Math.max(0, floodLevel-0.8);
+    // утопление существ в воде
+    if(cycle%8===0){
+      const waterY = Math.floor((H - floodLevel)/CELL);
+      for(let c2 of creatures){
+        if(!c2.alive)continue;
+        if(c2.head().y > waterY && Math.random()<0.03) c2.dieAsCorpse();
+      }
+    }
+    if(floodTimer<=0){
+      flood=false; floodLevel=0;
+      // после отступления воды — трупы оживают
+      floodAftermath();
+      addLog('🌊 Вода отступила. Из трупов рождается жизнь...');
+    }
+  }
+
+  // споры
+  for(let sp of spores) if(sp.alive) sp.update();
+  if(spores.length > 300) spores = spores.filter(sp=>sp.alive);
+
+  // трупы
+  for(let cp of corpses) if(cp.alive) cp.update();
+  if(corpses.length>200) corpses=corpses.filter(cp=>cp.alive);
+
+  // существа
+  for(let i2=0;i2<creatures.length;i2++){ if(creatures[i2].alive) creatures[i2].update(); }
+  if(creatures.length>500) creatures=creatures.filter(cr=>cr.alive);
+
+  // мягкий потолок биомассы — перенаселение давит энергию, не убивает сразу
+  const alive=creatures.filter(cr=>cr.alive);
+  const biomass=alive.reduce((s,x)=>{
+    const w=x.socialStatus==='mega'?5:x.socialStatus==='empire'?3:x.socialStatus==='colony'?2:1;
+    return s+w;
+  },0);
+  if(biomass>350){
+    // мягкое давление
+    const pressure = (biomass - 350) / 350;
+    for(let cr of alive) cr.energy -= pressure * 0.8;
+  }
+  if(biomass>500){
+    // жёсткий предел
+    const sorted=alive.slice().sort((a,b)=>a.energy-b.energy);
+    let bm=biomass;
+    for(let cr of sorted){
+      if(bm<=400) break;
+      const w=cr.socialStatus==='mega'?5:cr.socialStatus==='empire'?3:cr.socialStatus==='colony'?2:1;
+      cr.die(); bm-=w;
+    }
+  }
+
+  // жёсткий пол 5
+  const aliveNow=creatures.filter(cr=>cr.alive);
+  if(aliveNow.length<30){
+    const cols=[...activeColors];
+    for(let n=0;n<30-aliveNow.length;n++){
+      const col=cols[Math.floor(Math.random()*cols.length)]||PALETTE[0];
+      const x=5+Math.floor(Math.random()*(COLS-10));
+      const top=getSoilTop(x);
+      const c2=new Creature(x,Math.max(2,top-2),col,2);
+      c2.energy=150; // достаточно энергии чтобы выжить
+      creatures.push(c2);
+    }
+    addLog('🌱 Жизнь возрождается из пепла');
+  }
+
+  // ── ВОЙНЫ ИМПЕРИЙ ──
+  if(cycle % 40 === 0){
+    // сбрасываем флаги войны
+    for(let x of creatures) if(x.alive) x.atWar=false;
+
+    // Группируем по кластерам (не по цвету) — каждый кластер может воевать отдельно
+    // empire одного цвета НЕ воюют. mega одного цвета МОГУТ воевать.
+    const clusters = {}; // clusters[key] = {members, cx, cy, color, status}
+    for(let x of alive){
+      if(x.socialStatus!=='empire'&&x.socialStatus!=='mega') continue;
+      // ключ кластера: для empire — цвет (все одного цвета = союзники)
+      // для mega — clusterName или id первого члена (отдельные кластеры)
+      const ckey = x.socialStatus==='empire'
+        ? 'emp_'+x.color
+        : 'meg_'+(x.clusterName||x.color+'_'+x.id);
+      if(!clusters[ckey]) clusters[ckey]={members:[],cx:0,cy:0,color:x.color,status:x.socialStatus};
+      clusters[ckey].members.push(x);
+    }
+    for(let k in clusters){
+      const g=clusters[k];
+      g.cx=g.members.reduce((s,x)=>s+x.head().x,0)/g.members.length;
+      g.cy=g.members.reduce((s,x)=>s+x.head().y,0)/g.members.length;
+    }
+    const ckeys=Object.keys(clusters);
+    for(let i=0;i<ckeys.length;i++){
+      for(let j=i+1;j<ckeys.length;j++){
+        const a=clusters[ckeys[i]], b=clusters[ckeys[j]];
+        // empire одного цвета не воюют никогда
+        if(a.status==='empire'&&b.status==='empire'&&a.color===b.color) continue;
+        const d=Math.hypot(a.cx-b.cx, a.cy-b.cy);
+        if(d<35){
+          const key=[ckeys[i],ckeys[j]].sort().join('__');
+          if(truces[key]) continue;
+          if(!wars[key]){
+            wars[key]={startCycle:cycle,intensity:0};
+            const same=a.color===b.color?' (гражданская война!)':'';
+            addLog('⚔️ ВОЙНА: '+colorName(a.color)+' vs '+colorName(b.color)+same);
+          }
+          wars[key].intensity=Math.min(1,(cycle-wars[key].startCycle)/500);
+          for(let x of a.members) x.atWar=true;
+          for(let x of b.members) x.atWar=true;
+        }
+      }
+    }
+    // завершаем войны где кластеры исчезли
+    for(let key in wars){
+      const [c1,c2]=key.split('__');
+      if(!clusters[c1]||!clusters[c2]){
+        const winner=clusters[c1]?clusters[c1].color:clusters[c2]?clusters[c2].color:null;
+        if(winner) addLog('🏆 '+colorName(winner)+' выиграла войну!');
+        delete wars[key];
+      } else {
+        const war=wars[key];
+        if(cycle-war.startCycle>4000&&!truces[key]){
+          const bothLarge=clusters[c1].members.length>5&&clusters[c2].members.length>5;
+          if(bothLarge&&Math.random()<0.008){
+            truces[key]=cycle+6000;
+            delete wars[key];
+            for(let x of creatures) if(x.alive) x.atWar=false;
+            addLog('🤝 Перемирие: '+colorName(clusters[c1]?.color||'?')+' и '+colorName(clusters[c2]?.color||'?'));
+          }
+        }
+      }
+    }
+    for(let key in truces){
+      if(cycle>truces[key]){
+        delete truces[key];
+        const [c1,c2]=key.split('__');
+        addLog('😤 Перемирие истекло');
+      }
+    }
+  }
+
+
+  // ── ЛАЗЕРЫ, МАГНЕТИЗМ, КОЛОНИИ МЕГ ──
+  if(cycle % 30 === 0){
+    lasers = lasers.filter(l=>l.timer>0);
+    for(let l of lasers) l.timer--;
+
+    const empireGroups={}, megaGroups2={};
+    for(let cr of alive){
+      if(cr.socialStatus==='empire'||cr.socialStatus==='mega'){
+        const grp=cr.socialStatus==='mega'?megaGroups2:empireGroups;
+        if(!grp[cr.color]) grp[cr.color]={members:[],cx:0,cy:0};
+        grp[cr.color].members.push(cr);
+      }
+    }
+    for(let grp of [empireGroups,megaGroups2]){
+      for(let col in grp){
+        const g=grp[col];
+        g.cx=g.members.reduce((s,x)=>s+x.head().x,0)/g.members.length;
+        g.cy=g.members.reduce((s,x)=>s+x.head().y,0)/g.members.length;
+      }
+    }
+
+    // лазеры империй (d 20-45) — одного цвета не стреляют
+    const empKeys=Object.keys(empireGroups);
+    for(let i=0;i<empKeys.length;i++) for(let j=i+1;j<empKeys.length;j++){
+      if(empKeys[i]===empKeys[j]) continue; // один цвет — не стреляем
+      const a=empireGroups[empKeys[i]],b=empireGroups[empKeys[j]];
+      const key=['emp_'+empKeys[i],'emp_'+empKeys[j]].sort().join('__');
+      if(truces[key]) continue;
+      const d=Math.hypot(a.cx-b.cx,a.cy-b.cy);
+      if(d>=20&&d<=45){
+        const sh=a.members[Math.floor(Math.random()*a.members.length)];
+        const tg=b.members[Math.floor(Math.random()*b.members.length)];
+        if(sh&&tg){
+          lasers.push({x1:sh.head().x,y1:sh.head().y,x2:tg.head().x,y2:tg.head().y,color:empKeys[i],timer:8,isMega:false});
+          tg.energy-=8+Math.random()*4;
+        }
+      }
+    }
+
+    // лазеры мег (d 30-70) — одного цвета тоже могут стрелять
+    const megKeys=Object.keys(megaGroups2);
+    for(let i=0;i<megKeys.length;i++) for(let j=i+1;j<megKeys.length;j++){
+      const a=megaGroups2[megKeys[i]],b=megaGroups2[megKeys[j]];
+      const key=['meg_'+megKeys[i],'meg_'+megKeys[j]].sort().join('__');
+      if(truces[key]) continue;
+      const d=Math.hypot(a.cx-b.cx,a.cy-b.cy);
+      if(d>=30&&d<=70){
+        const sh=a.members[Math.floor(Math.random()*a.members.length)];
+        const tg=b.members[Math.floor(Math.random()*b.members.length)];
+        if(sh&&tg){
+          lasers.push({x1:sh.head().x,y1:sh.head().y,x2:tg.head().x,y2:tg.head().y,color:megKeys[i],timer:10,isMega:true});
+          tg.energy-=15+Math.random()*8;
+        }
+      }
+    }
+
+    // магнетизм империй (r=30)
+    for(let col in empireGroups){
+      const g=empireGroups[col];
+      for(let cr of alive){
+        if(cr.color===col||cr.socialStatus!=='solo') continue;
+        const d=Math.hypot(cr.head().x-g.cx,cr.head().y-g.cy);
+        if(d<30&&d>3){
+          const a=Math.atan2(g.cy-cr.head().y,g.cx-cr.head().x);
+          cr.dx=Math.round(Math.cos(a)); cr.dy=Math.round(Math.sin(a));
+          if(d<5&&Math.random()<0.2){ cr.energy-=15; if(g.members[0]) g.members[0].energy+=10; }
+        }
+      }
+    }
+
+    // магнетизм мег (r=60)
+    for(let col in megaGroups2){
+      const g=megaGroups2[col];
+      for(let cr of alive){
+        if(cr.color===col||cr.socialStatus==='mega') continue;
+        const d=Math.hypot(cr.head().x-g.cx,cr.head().y-g.cy);
+        if(d<60&&d>5){
+          const a=Math.atan2(g.cy-cr.head().y,g.cx-cr.head().x);
+          if(Math.random()<0.6){ cr.dx=Math.round(Math.cos(a)); cr.dy=Math.round(Math.sin(a)); }
+          if(d<8&&Math.random()<0.15){ cr.energy-=20; if(g.members[0]) g.members[0].energy+=15; }
+        }
+      }
+    }
+
+    // меги рождают дочерние колонии раз в 600 тиков
+    if(cycle%600===0){
+      for(let col in megaGroups2){
+        const g=megaGroups2[col];
+        if(Math.random()<0.4){
+          const parent=g.members[Math.floor(Math.random()*g.members.length)];
+          const ph=parent.head();
+          const sx=Math.max(3,Math.min(COLS-4,ph.x+(Math.random()<0.5?15:-15)));
+          const sy=Math.max(3,Math.min(ROWS-4,ph.y+Math.floor(Math.random()*7)-3));
+          for(let k=0;k<3+Math.floor(Math.random()*2);k++){
+            const child=new Creature(Math.max(1,Math.min(COLS-2,sx+Math.floor(Math.random()*5)-2)),Math.max(1,sy),col,3);
+            child.energy=120; child.genes=mutateGenes(genePool[col]||defaultGenes(),0.05);
+            child.isAdult=true; child.name=genAdultName(); child.seekingColony=true;
+            creatures.push(child);
+          }
+          addLog("👑 "+colorName(col)+" основала дочернюю колонию");
+        }
+      }
+    }
+  }
+
+  // ── ВЫБРОС СПОР из мегаструктур ──
+  if(cycle % 80 === 0){
+    const megaByColor = {};
+    for(let x of alive){
+      if(x.socialStatus==='mega'){
+        if(!megaByColor[x.color]) megaByColor[x.color]=[];
+        megaByColor[x.color].push(x);
+      }
+    }
+    for(let col in megaByColor){
+      const grp = megaByColor[col];
+      // центр масс меги
+      const mcx = Math.round(grp.reduce((s,x)=>s+x.head().x,0)/grp.length);
+      const mcy = Math.round(grp.reduce((s,x)=>s+x.head().y,0)/grp.length);
+
+      // === ДЕТЕКТИРОВАНИЕ ЗАСТРЕВАНИЯ ===
+      const DAY_TICKS = 6000; // тиков в сутках
+      if(!megaPositions[col]){
+        megaPositions[col] = {cx:mcx, cy:mcy, stuckSince:cycle};
+      } else {
+        const mp = megaPositions[col];
+        const moved = Math.hypot(mcx-mp.cx, mcy-mp.cy);
+        if(moved > 3){
+          // мега сдвинулась — сбрасываем таймер
+          mp.cx=mcx; mp.cy=mcy; mp.stuckSince=cycle;
+        }
+        // застряла более 3 суток (18000 тиков)?
+        const stuckDays = (cycle - mp.stuckSince) / DAY_TICKS;
+        if(stuckDays >= 3){
+          // === СПОРЫ-БУРИЛЬЩИКИ — едят свой и чужой цвет ===
+          if(spores.filter(s=>s.alive&&s.color===col+'_drill').length < 6){
+            const drillCount = 2 + Math.floor(Math.random()*3);
+            for(let k=0;k<drillCount;k++){
+              const parent = grp[Math.floor(Math.random()*grp.length)];
+              const ph = parent.head();
+              // выпускаем вниз и в стороны
+              const ox = Math.floor(Math.random()*7)-3;
+              const oy = Math.floor(Math.random()*3); // вниз или горизонтально
+              const sp = new Spore(
+                Math.max(1,Math.min(COLS-2, ph.x+ox)),
+                Math.min(ROWS-2, ph.y+oy),
+                col
+              );
+              sp.isDriller = true; // ест свой и чужой цвет
+              spores.push(sp);
+            }
+            if(Math.random()<0.3) addLog('⛏ '+colorName(col)+' выпустила бурильщиков!');
+          }
+          continue; // застрявшая мега не выпускает обычные споры
+        }
+      }
+
+      // === ОБЫЧНЫЕ СПОРЫ — вверх и в стороны ===
+      if(spores.filter(s=>s.alive&&s.color===col&&!s.isDriller).length > 12) continue;
+      const count = 1 + Math.floor(Math.random()*3);
+      for(let k=0;k<count;k++){
+        const parent = grp[Math.floor(Math.random()*grp.length)];
+        const ph = parent.head();
+        const ox = Math.floor(Math.random()*11) - 5;
+        const oy = -(1 + Math.floor(Math.random()*4)); // вверх
+        const sx = Math.max(1, Math.min(COLS-2, ph.x + ox));
+        const sy = Math.max(1, ph.y + oy);
+        spores.push(new Spore(sx, sy, col));
+      }
+    }
+    // чистим позиции мег которых больше нет
+    for(let col in megaPositions){
+      if(!megaByColor[col]) delete megaPositions[col];
+    }
+  }
+
+  // ── РАСПАД МЕГАСТРУКТУР ──
+  if(cycle % 200 === 0){
+    const megaGroups={};
+    for(let x of alive){
+      if(x.socialStatus==='mega'){
+        if(!megaGroups[x.color]) megaGroups[x.color]=[];
+        megaGroups[x.color].push(x);
+      }
+    }
+    for(let col in megaGroups){
+      const grp=megaGroups[col];
+      // мегаструктура нестабильна после 800 циклов существования
+      if(grp.length>=18 && !(splitCooldown[col]&&cycle<splitCooldown[col])){
+        if(Math.random()<0.008){ // ~0.8% шанс каждые 200 тиков = редко
+          // делим пополам: половина разлетается в стороны
+          const half=Math.floor(grp.length/2);
+          const splinters=grp.slice(0,half);
+          for(let x of splinters){
+            // разрыв связей
+            x.bondedTo=null;
+            x.socialStatus='solo';
+            // резкий импульс в сторону
+            x.dx=Math.random()<0.5?3:-3;
+            x.dy=Math.floor(Math.random()*3)-1;
+            x.energy*=0.7; // распад стоит энергии
+          }
+          splitCooldown[col]=cycle+2000;
+          addLog('💥 Мегаструктура '+colorName(col)+' раскололась!');
+        }
+      }
+    }
+  }
+
+  if(cycle%48000===0  && Math.random()<0.12 && !drought)      triggerDrought();
+  if(cycle%72000===0  && Math.random()<0.10 && !geneticStorm) triggerStorm();
+  if(cycle%96000===0  && Math.random()<0.08 && !flood)        triggerFlood();
+
+  // ── ЛЕВИАФАН ──
+  if(leviathan && leviathan.alive) leviathan.update();
+  if(leviathan && !leviathan.alive) leviathan=null;
+  if(!leviathan && cycle%100000===0 && cycle>0 && Math.random()<0.30){
+    leviathan = new Leviathan();
+    addLog('🐋 ЛЕВИАФАН появился из глубин!');
+    showBanner('🐋 ЛЕВИАФАН', '#226644', 3000);
+    cataclysms.leviathan++;
+  }
+}
+
+// ── КАТАКЛИЗМЫ ─────────────────────────────────────────────────────
+function meteorStrike(){
+  const mx=10+Math.floor(Math.random()*(COLS-20));
+  addLog('☄ МЕТЕОРИТ! Земля содрогается...');
+  showBanner('☄ МЕТЕОРИТ', '#cc4400', 60);
+  cataclysms.meteor++;
+  meteorFlash={x:mx*CELL,timer:25};
+  for(let cr of creatures)
+    if(cr.alive&&Math.abs(cr.head().x-mx)<15&&Math.random()<0.65) cr.dieAsCorpse();
+  for(let y=GROUND_Y-5;y<ROWS;y++)
+    for(let x=mx-14;x<mx+14;x++){
+      if(x<0||x>=COLS)continue;
+      const d=Math.abs(x-mx)+Math.abs(y-(GROUND_Y-1));
+      if(d<8) soil[y][x]=null;
+      else if(d<13) soil[y][x]={solid:true,color:null,shade:0.8,stardust:true};
+    }
+  for(let cr of creatures)
+    if(cr.alive&&Math.abs(cr.head().x-mx)<24) cr.energy=Math.min(200,cr.energy*3);
+}
+function triggerDrought(){
+  drought=true; droughtTimer=500;
+  addLog('☀ ВЕЛИКАЯ ЗАСУХА. Фотосинтез замер.');
+  showBanner('☀ ВЕЛИКАЯ ЗАСУХА', '#cc6600', 500);
+  cataclysms.drought++;
+}
+function triggerStorm(){
+  geneticStorm=true; stormTimer=250;
+  addLog('🧬 ГЕНЕТИЧЕСКИЙ ШТОРМ! Жизнь меняется.');
+  showBanner('🧬 ГЕНЕТИЧЕСКИЙ ШТОРМ', '#8844cc', 250);
+  cataclysms.storm++;
+}
+
+// ── ПОТОП ──────────────────────────────────────────────────────────
+function triggerFlood(){
+  if(flood) return;
+  flood=true; floodTimer=700; floodLevel=0;
+  addLog('🌊 ВЕЛИКИЙ ПОТОП. Воды поднимаются...');
+  showBanner('🌊 ВЕЛИКИЙ ПОТОП', '#2255cc', 700);
+  cataclysms.flood++;
+}
+
+function floodAftermath(){
+  // каждый труп с шансом 40% порождает новое существо-мутанта
+  let born=0;
+  const snapshot=[...corpses];
+  for(let cp of snapshot){
+    if(!cp.segs||cp.segs.length===0) continue;
+    if(Math.random()<0.4){
+      const mutRate=0.35; // потоп порождает много мутантов
+      let col=cp.color;
+      if(Math.random()<mutRate){
+        const unused=PALETTE.filter(p=>!activeColors.has(p));
+        col=unused.length>0?unused[0]:PALETTE[Math.floor(Math.random()*PALETTE.length)];
+        activeColors.add(col);
+      }
+      const seg=cp.segs[Math.floor(Math.random()*cp.segs.length)];
+      const top=getSoilTop(seg.x);
+      const child=new Creature(seg.x,Math.max(2,top-1),col,1);
+      child.energy=65; child.seekingColony=true;
+      creatures.push(child);
+      born++;
+    }
+  }
+  corpses=[]; // вода смыла все трупы
+  if(born>0) addLog(`🐣 Потоп породил ${born} новых существ!`);
+}
+
+// ── UI ─────────────────────────────────────────────────────────────
+document.getElementById('btnPause').addEventListener('click',function(){
+  paused=!paused; this.textContent=paused?'▶ Продолжить':'⏸ Пауза';
+  this.classList.toggle('active',paused);
+});
+document.getElementById('btnFast').addEventListener('click',function(){
+  fastMode=!fastMode; this.classList.toggle('active',fastMode);
+});
+document.getElementById('btnMeteor').addEventListener('click',meteorStrike);
+document.getElementById('btnDrought').addEventListener('click',triggerDrought);
+document.getElementById('btnStorm').addEventListener('click',triggerStorm);
+document.getElementById('btnFlood').addEventListener('click',triggerFlood);
+document.getElementById('btnLeviathan').addEventListener('click',function(){
+  if(!leviathan){
+    leviathan=new Leviathan();
+    addLog('🐋 ЛЕВИАФАН появился из глубин!');
+    showBanner('🐋 ЛЕВИАФАН', '#226644', 3000);
+    cataclysms.leviathan++;
+  }
+});
+
+// ── ИНИЦИАЛИЗАЦИЯ ──────────────────────────────────────────────────
+function init(){
+  initSoil(); creatures=[]; corpses=[]; spores=[]; activeColors.clear(); rareColors.clear(); cycle=0; logs=[]; wars={}; truces={}; splitCooldown={}; meteorFlash=null; genePool={}; popHistory={}; leviathan=null; clusterDowngrade={}; clusterNames={}; colonyCounter=0; lasers=[]; megaPositions={}; extinctionActive=false; extinctionLevel=0;
+  cataclysms.meteor=0; cataclysms.drought=0; cataclysms.storm=0; cataclysms.flood=0; cataclysms.leviathan=0;
+  const startCols=PALETTE.slice(0,7);
+  STARTER_COLORS = new Set(startCols);
+  startCols.forEach(col=>{
+    activeColors.add(col);
+    genePool[col] = defaultGenes();
+    for(let i=0;i<16;i++){
+      const x=5+Math.floor(Math.random()*(COLS-10));
+      const top=getSoilTop(x);
+      const y=Math.max(2,top-1-Math.floor(Math.random()*4));
+      const c=new Creature(x,y,col,3);
+      c.energy=300;
+      c.seekingColony=true;
+      creatures.push(c);
+    }
+  });
+  addLog('🌍 Мир сотворён. Летопись начинается.');
+}
+
+// ── КЛИК НА СУЩЕСТВО ──────────────────────────────────────────────
+// ── ПОДСВЕТКА СТРУКТУР ──────────────────────────────────────────
+let highlightType = null;   // 'colony' | 'empire' | 'mega' | null
+let highlightEnd  = 0;      // cycle когда заканчивается подсветка
+const HIGHLIGHT_DURATION = 120; // тиков (~2 сек при обычной скорости)
+
+function triggerHighlight(type){
+  highlightType = type;
+  highlightEnd  = cycle + HIGHLIGHT_DURATION;
+}
+
+document.getElementById('btnColonies').addEventListener('click', ()=>triggerHighlight('colony'));
+document.getElementById('btnEmpires') .addEventListener('click', ()=>triggerHighlight('empire'));
+document.getElementById('btnMegas')   .addEventListener('click', ()=>triggerHighlight('mega'));
+
+let selectedCreature = null;
+canvas.addEventListener('click', function(e){
+  const rect=canvas.getBoundingClientRect();
+  const mx=Math.floor((e.clientX-rect.left)/CELL);
+  const my=Math.floor((e.clientY-rect.top)/CELL);
+  let found=null, minD=3;
+  for(let cr of creatures){
+    if(!cr.alive)continue;
+    for(let seg of cr.segments){
+      const d=Math.abs(seg.x-mx)+Math.abs(seg.y-my);
+      if(d<minD){minD=d;found=cr;}
+    }
+  }
+  selectedCreature=found;
+  const card=document.getElementById('creature-card');
+  const clog=document.getElementById('creature-log');
+  if(!found){
+    card.className='';
+    card.innerHTML='· кликни на существо ·';
+    if(clog){ clog.innerHTML=''; }
+    return;
+  }
+  // очищаем лог при смене существа
+  if(clog) clog.innerHTML='';
+  creatureLogs=[];
+  updateCreatureCard();
+});
+
+function updateCreatureCard(){
+  if(!selectedCreature||!selectedCreature.alive) return;
+  const cr=selectedCreature;
+  const card=document.getElementById('creature-card');
+  if(!card) return;
+  card.className='active';
+  const clusterLine = cr.clusterName ? `<div class="card-row"><span>Кластер</span><span class="val" style="color:${cr.color};font-size:9px">${cr.clusterName}</span></div>` : '';
+  card.innerHTML=`
+    <div class="card-name" style="color:${cr.color}">${cr.name}</div>
+    <div class="card-row"><span>Вид</span><span class="val">${colorName(cr.color)}</span></div>
+    <div class="card-row"><span>Статус</span><span class="val">${{solo:'Одиночка',colony:'🔵Колония',empire:'⚔️Империя',mega:'👑Мега'}[cr.socialStatus]||'?'}</span></div>
+    ${clusterLine}
+    <div class="card-row"><span>Сегм.</span><span class="val">${cr.size}</span></div>
+    <div class="card-row"><span>Энергия</span><span class="val">${Math.round(cr.energy)}</span></div>
+    <div class="card-row"><span>Возраст</span><span class="val">${cr.age}</span></div>
+    <div class="card-row"><span>Потомков</span><span class="val">${cr.offspring}</span></div>
+    <div class="gene-title">ГЕНЫ</div>
+    <div class="card-row"><span>Агрессия</span><span class="val" style="color:${cr.genes.aggression>0.7?'#e05252':cr.genes.aggression<0.3?'#52e07a':'#c8c0a0'}">${cr.genes.aggression.toFixed(2)}</span></div>
+    <div class="card-row"><span>Метаболизм</span><span class="val">${cr.genes.metabolism.toFixed(2)}</span></div>
+    <div class="card-row"><span>Фотосинтез</span><span class="val">${cr.genes.photoRate.toFixed(2)}</span></div>
+    <div class="card-row"><span>Социальн.</span><span class="val">${cr.genes.socialTendency.toFixed(2)}</span></div>
+  `;
+}
+
+function loop(){
+  requestAnimationFrame(loop);
+  if(paused)return;
+  const steps=fastMode?6:1;
+  for(let i=0;i<steps;i++)tick();
+  render();
+}
+init();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
