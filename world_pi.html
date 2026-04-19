@@ -104,7 +104,7 @@
 </head>
 <body>
 <div id="ui">
-  <div id="ui-title">АКВАТУРИУМ<small>v0.28 pi</small></div>
+  <div id="ui-title">АКВАТУРИУМ<small>v0.61 pi</small></div>
   <div class="stat">Сутки: <b id="sCycle">0</b></div>
   <div class="stat">Существ: <b id="sCreatures">0</b></div>
   <div class="stat">Видов: <b id="sSpecies">0</b></div>
@@ -124,7 +124,9 @@
     <button id="btnStorm">🧬 Шторм</button>
     <button id="btnFlood">🌊 Потоп</button>
     <button id="btnLeviathan">🐋 Левиафан</button>
+    <button id="btnScreenshot">📷 Скрин</button>
   </div>
+  <div id="clock" style="color:#fff;font-size:11px;font-weight:bold;white-space:nowrap;padding-left:8px;letter-spacing:1px"></div>
 </div>
 <div id="wrap"><canvas id="c"></canvas>
 <div id="log">
@@ -158,12 +160,20 @@ function ticksPerStep(size, social, isNight) {
   if (social === 'empire')    base *= 1.6;
   if (social === 'mega')      base *= 2.2; // мегаструктура — монолитно медленная
   if (isNight)  base *= 2.5;
-  return base * 0.7; // более живое движение
+  return base * 0.9;
 }
 
 let leviathan = null; // единственный левиафан, null если нет
 let lasers = []; // [{x1,y1,x2,y2,color,timer}] — активные лазеры для рендера
 let megaPositions = {}; // megaPositions[color] = {cx, cy, stuckSince}
+// offscreen canvas для почвы — перерисовываем только при изменении
+let soilCanvas = null, soilCtx = null, soilDirty = true;
+function initSoilCanvas(){
+  soilCanvas = document.createElement('canvas');
+  soilCanvas.width = W; soilCanvas.height = H;
+  soilCtx = soilCanvas.getContext('2d', {alpha:false});
+  soilDirty = true;
+}
 let corpses = [];
 let spores  = []; // имперские споры-горееды
 let wars    = {}; // wars[colorA+'_'+colorB] = {startCycle, intensity}
@@ -236,13 +246,27 @@ let territory = []; // territory[y][x] = color or null — claimed by empire
 
 const PALETTE = ['#e05252','#52a0e0','#52e07a','#e0c452','#c452e0',
                  '#e07a52','#52e0d4','#e052a0','#a0e052','#7a52e0'];
-const NAMES   = {
+// редкие виды — рождаются только при массовом вымирании
+const RARE_PALETTE = [
+  '#ffffff','#ff88ff','#88ffff','#ffff44','#ff4444',
+  '#44ff44','#4444ff','#ff8800','#00ff88','#8800ff'
+];
+const RARE_NAMES = {
+  '#ffffff':'Белые','#ff88ff':'Призрачные','#88ffff':'Хрустальные',
+  '#ffff44':'Солнечные','#ff4444':'Алые Огни','#44ff44':'Нефритовые',
+  '#4444ff':'Сапфировые','#ff8800':'Янтарные Огни','#00ff88':'Изумрудные Огни','#8800ff':'Тёмные'
+};
+const NAMES_BASE = {
   '#e05252':'Алые','#52a0e0':'Лазурные','#52e07a':'Изумрудные',
   '#e0c452':'Золотые','#c452e0':'Аметистовые','#e07a52':'Янтарные',
   '#52e0d4':'Бирюзовые','#e052a0':'Пурпурные','#a0e052':'Жадеитовые','#7a52e0':'Индиговые'
 };
+const NAMES = Object.assign({}, NAMES_BASE, RARE_NAMES);
 let activeColors = new Set();
-let STARTER_COLORS = new Set(); // цвета стартовой популяции
+let STARTER_COLORS = new Set();
+let rareColors = new Set(); // редкие виды — особые правила
+let extinctionActive = false; // флаг массового вымирания
+let extinctionLevel = 0;      // 0..1 — насколько заполнен экран трупами
 function colorName(c){ return NAMES[c] || 'Мутант'; }
 
 function isNight(){ return (cycle % 6000) >= 4000; }
@@ -296,6 +320,7 @@ function getSoilBottom(x, fromY){
 function setSoil(x, y, color){
   if(x<0||x>=COLS||y<0||y>=ROWS) return;
   soil[y][x] = { solid:true, color, shade:0.45, _css:null };
+  soilDirty = true;
 }
 
 // регистрируем тепло битвы → горы растут быстрее
@@ -357,7 +382,7 @@ class Leviathan {
     for(let x=Math.max(0,c1); x<=Math.min(COLS-1,c2); x++){
       for(let y=r1; y<=r2; y++){
         if(soil[y]&&soil[y][x]&&soil[y][x].solid){
-          soil[y][x]=null;
+          soil[y][x]=null; soilDirty=true;
           this.digestedSegs++;
         }
       }
@@ -398,25 +423,25 @@ class Leviathan {
       const poopX = this.dir===1
         ? Math.max(2, this.col1 - 3)
         : Math.min(COLS-3, this.col2 + 3);
-      // строим холм из накопленного кала
       const n = this.poopAccum;
       this.poopAccum = 0;
       const radius = Math.max(1, Math.floor(Math.sqrt(n) * 1.2));
-      const x0 = Math.max(0, poopX-radius-1), x1 = Math.min(COLS-1, poopX+radius+1);
-      const baseTop = {};
-      for(let bx=x0;bx<=x1;bx++) baseTop[bx]=getSoilTop(bx);
-      const slots=[];
-      for(let layer=0;layer<=radius+4;layer++){
-        const w=radius-layer; if(w<0) break;
-        for(let dx=-w;dx<=w;dx++){
-          const bx=poopX+dx; if(bx<x0||bx>x1) continue;
-          const gy=(baseTop[bx]||GROUND_Y)-1-layer;
-          if(gy>=0) slots.push({bx,gy,layer});
+      const localTopP = {};
+      const getTopP = (bx)=>{ if(localTopP[bx]!==undefined) return localTopP[bx]; return localTopP[bx]=getSoilTop(bx); };
+      let placedP=0;
+      for(let dx=0; dx<=radius+4&&placedP<n; dx++){
+        for(let sign of (dx===0?[0]:[-1,1])){
+          if(placedP>=n) break;
+          const bx=poopX+dx*sign;
+          if(bx<0||bx>=COLS) continue;
+          const gy=Math.max(0, getTopP(bx)-1);
+          if(gy>=0&&gy<ROWS&&!(soil[gy]&&soil[gy][bx]&&soil[gy][bx].solid)){
+            setSoil(bx,gy,null);
+            localTopP[bx]=gy;
+            placedP++;
+          }
         }
       }
-      slots.sort((a,b)=>b.layer-a.layer);
-      const toPlace=Math.min(n,slots.length);
-      for(let i=0;i<toPlace;i++) setSoil(slots[i].bx,slots[i].gy,null); // серая почва
     }
 
     // ── РОЖДЕНИЕ СУЩЕСТВ (70%) — по одному-два в шаг ──
@@ -428,21 +453,14 @@ class Leviathan {
         ? Math.max(2, this.col1 - 2)
         : Math.min(COLS-3, this.col2 + 2);
       for(let i=0; i<born; i++){
-        let col;
-        if(Math.random()<0.12){
-          const unused=PALETTE.filter(p=>!activeColors.has(p));
-          col=unused.length>0?unused[0]:PALETTE[Math.floor(Math.random()*PALETTE.length)];
-          activeColors.add(col);
-          if(!genePool[col]) genePool[col]=mutateGenes(defaultGenes(),0.4);
-        } else {
-          col=cols[Math.floor(Math.random()*cols.length)]||PALETTE[0];
-        }
+        // левиафан рождает существ только из уже существующих видов — не создаёт новых
+        const col=cols[Math.floor(Math.random()*cols.length)]||PALETTE[0];
         const py=this.row1+Math.floor(Math.random()*(this.row2-this.row1));
         const child=new Creature(
           Math.max(1,Math.min(COLS-2,poopX+Math.floor(Math.random()*5)-2)),
-          Math.max(1,py), col, 1
+          Math.max(1,py), col, 2  // size=2 чтобы не умер сразу
         );
-        child.energy=60;
+        child.energy=150; // достаточно для выживания
         child.seekingColony=true;
         creatures.push(child);
       }
@@ -540,41 +558,47 @@ class Corpse {
     if(!this.segs.length) return;
     const cx = Math.round(this.segs.reduce((s,seg)=>s+seg.x,0)/this.segs.length);
     const cy = Math.round(this.segs.reduce((s,seg)=>s+seg.y,0)/this.segs.length);
-    this._buildHill(cx, this.segs.length, this.color, cy);
+    this._buildHill(cx, this.segs.length, this.color, cy, this.segs);
   }
 
-  // строим пологий холм из n блоков с центром cx, падая вниз от deathY
-  _buildHill(cx, n, color, deathY){
-    // radius достаточно большой чтобы slots >= n всегда
-    // slots = 1 + 2*(radius+2) = 2*radius+5
-    // нам нужно 2*radius+5 >= n → radius >= (n-5)/2
-    const minRadius = Math.ceil((n-5)/2);
-    const radius = Math.max(2, Math.floor(Math.sqrt(n) * 1.6), minRadius);
-    // генерируем слоты вокруг центра смерти — по убыванию приоритета
-    // слоты идут от центра наружу горизонтально, блоки падают вниз гравитацией
-    const slots = [];
-    for(let dx = 0; dx <= radius+2; dx++){
-      for(let sign of (dx===0?[0]:[-1,1])){
-        const bx = cx + dx*sign;
-        if(bx<0||bx>=COLS) continue;
-        // блок падает вниз от deathY до первой твёрдой поверхности
-        const gy = getSoilBottom(bx, deathY);
-        if(gy>=0) slots.push({bx, gy, dist:dx});
+  // каждый сегмент падает вниз в своей колонке
+  // если в колонке уже много блоков — перекидываем на соседей
+  _buildHill(cx, n, color, deathY, segs){
+    const localTop = {};
+    const colCount = {}; // сколько блоков уже положили в каждую колонку
+    const getTop = (bx) => {
+      if(localTop[bx] !== undefined) return localTop[bx];
+      return localTop[bx] = getSoilTop(bx);
+    };
+
+    const sources = segs && segs.length > 0
+      ? segs.map(s=>s.x)
+      : Array.from({length:n}, (_,i)=>Math.max(0,Math.min(COLS-1,cx+Math.floor(i/2)*(i%2===0?1:-1))));
+
+    let placed = 0;
+    for(let i = 0; i < sources.length && placed < n; i++){
+      let bx = Math.max(0, Math.min(COLS-1, sources[i]));
+
+      // если в этой колонке уже 3+ блоков — ищем соседа с меньшей высотой
+      if((colCount[bx]||0) >= 3){
+        const left  = Math.max(0, bx-1);
+        const right = Math.min(COLS-1, bx+1);
+        const topL  = getTop(left);
+        const topR  = getTop(right);
+        const topC  = getTop(bx);
+        // идём туда где ниже гора
+        if(topL > topC && topL >= topR) bx = left;
+        else if(topR > topC) bx = right;
+        // если оба соседа выше — оставляем в своей колонке
       }
-    }
-    // сортируем: сначала ближние к центру (пирамида)
-    slots.sort((a,b)=>a.dist-b.dist);
-    const toPlace = Math.min(n, slots.length);
-    // дедупликация — не класть два блока в одну клетку
-    const placed = new Set();
-    let count = 0;
-    for(let s of slots){
-      if(count >= toPlace) break;
-      const key = s.bx+'_'+s.gy;
-      if(placed.has(key)) continue;
-      placed.add(key);
-      setSoil(s.bx, s.gy, color);
-      count++;
+
+      const gy = Math.max(0, getTop(bx) - 1);
+      if(gy >= 0 && gy < ROWS && !(soil[gy]&&soil[gy][bx]&&soil[gy][bx].solid)){
+        setSoil(bx, gy, color);
+        localTop[bx] = gy;
+        colCount[bx] = (colCount[bx]||0) + 1;
+        placed++;
+      }
     }
   }
 }
@@ -605,7 +629,7 @@ class Spore {
     this.age++;
     this.energy -= 0.05;
     if(this.energy <= 0){ this.die(); return; }
-    if(this.age > 2000){ this.die(); return; }
+    if(this.age > (this.isDriller ? 6000 : 2000)){ this.die(); return; }
 
     // метаморфоз — при достаточной энергии спора становится существом
     if(this.energy >= 120 && this.corpseEaten >= 3){
@@ -656,28 +680,36 @@ class Spore {
       return;
     }
 
-    // === ПРИОРИТЕТ 2: нет трупов — едим чужую почву только если гора высокая ===
-    const searchDirs = [[0,1],[0,2],[1,1],[-1,1],[1,0],[-1,0],[2,1],[-2,1],[0,3]];
-    let foundSoil = false;
-    for(let [ddx,ddy] of searchDirs){
-      const nx2 = this.x+ddx, ny2 = this.y+ddy;
-      if(nx2<0||nx2>=COLS||ny2<0||ny2>=ROWS) continue;
-      if(soil[ny2]&&soil[ny2][nx2]&&soil[ny2][nx2].solid){
-        const s = soil[ny2][nx2];
-        // едим только если гора высокая
-        // бурильщик ест чужой И свой цвет, но не трупную почву своего цвета
-        const colTop = getSoilTop(nx2);
-        const isOwn = s.color === this.color;
-        const isTombstone = isOwn && !this.isDriller;
-        if(!isTombstone && (this.isDriller || !isOwn) && colTop < GROUND_Y - 3){
-          this.energy += s.stardust ? 25 : 12;
-          soil[ny2][nx2] = null;
-          this.y = Math.max(0, ny2 - 1);
-          foundSoil = true; break;
+    // === ПРИОРИТЕТ 2: нет трупов ===
+    if(this.isDriller){
+      // бурильщик активно прокапывает тоннель — ищет почву во всех направлениях
+      // приоритет: вниз, в стороны, вверх
+      const drillDirs = [[0,1],[1,0],[-1,0],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1],[0,2],[2,0],[-2,0],[0,-2]];
+      let ate=false;
+      for(let [ddx,ddy] of drillDirs){
+        const nx2=this.x+ddx, ny2=this.y+ddy;
+        if(nx2<0||nx2>=COLS||ny2<0||ny2>=ROWS) continue;
+        if(soil[ny2]&&soil[ny2][nx2]&&soil[ny2][nx2].solid){
+          this.energy += 15;
+          soil[ny2][nx2] = null; soilDirty=true;
+          // двигаемся в направлении раскопанного блока
+          const stepX=Math.max(0,Math.min(COLS-1,this.x+Math.sign(ddx)));
+          const stepY=Math.max(0,Math.min(ROWS-1,this.y+Math.sign(ddy)));
+          if(!(soil[stepY]&&soil[stepY][stepX]&&soil[stepY][stepX].solid)){
+            this.x=stepX; this.y=stepY;
+          }
+          ate=true; break;
         }
       }
-    }
-    if(!foundSoil){
+      if(!ate){
+        // нет почвы рядом — блуждаем
+        const dx=Math.random()<0.5?1:-1;
+        const nx3=Math.max(0,Math.min(COLS-1,this.x+dx));
+        if(!(soil[this.y]&&soil[this.y][nx3]&&soil[this.y][nx3].solid)) this.x=nx3;
+        this.y=Math.max(0,this.y-1); // бурильщик всплывает вверх если нет почвы
+      }
+    } else {
+      // обычные споры — блуждаем в поисках трупов
       const ddx2 = Math.random()<0.5?1:-1;
       const nx3 = Math.max(0,Math.min(COLS-1, this.x+ddx2));
       if(!(soil[this.y]&&soil[this.y][nx3]&&soil[this.y][nx3].solid)) this.x = nx3;
@@ -693,13 +725,17 @@ class Spore {
     const newLen = Math.min(6, startLen);
 
     // определяем доминирующий цвет съеденных трупов
-    let dominantColor = this.color; // по умолчанию — цвет родителя
+    let dominantColor = this.color;
     let maxEaten = 0;
     for(let col in this.corpseColors){
       if(this.corpseColors[col] > maxEaten){
         maxEaten = this.corpseColors[col];
         dominantColor = col;
       }
+    }
+    // 30% шанс сохранить собственный цвет — предотвращает монодоминанс через споры
+    if(dominantColor !== this.color && Math.random() < 0.3){
+      dominantColor = this.color;
     }
     // если съела больше чужих чем своих — наследует их цвет
     const inherited = dominantColor !== this.color;
@@ -736,9 +772,11 @@ class Creature {
     this.alive    = true;
     this.age      = 0;
     this.dx = Math.random()<0.5?1:-1; this.dy = 0;
-    this.stepTimer = 0;
+    // случайный сдвиг фазы — каждое существо тикает в своём ритме
+    this.stepTimer  = Math.floor(Math.random()*30);
+    this.ageOffset  = Math.floor(Math.random()*150); // сдвиг для age%150 роста
     this.laterals  = [];
-    this.reproTimer= 0;
+    this.reproTimer = Math.floor(Math.random()*300); // разброс начального таймера репро
     this.inEmpire  = false;
     this.socialStatus = 'solo'; // solo | colony | empire | mega
     this.bondedTo = null; // id партнёра по мостику
@@ -746,13 +784,17 @@ class Creature {
     this.atWar = false;       // участвует в войне прямо сейчас
     this.seekingColony = (len===1); // эмбрион ищет колонию
     this.trail = []; // шлейф движения [{x,y,age}]
-    this.offspring = 0; // число потомков
-    this.weight = 1.0; // вес: растёт с сегментами и энергией
-    // гены — наследуются от родителя, влияют на поведение
+    this.offspring = 0;
+    this.weight = 1.0;
     this.genes = genePool[color] ? {...genePool[color]} : defaultGenes();
-    // имя — пиздюк для молодых, взрослое при достижении 12 сег
-    this.name = 'Пиздюк-'+this.id;
-    this.isAdult = false;
+    // имя зависит от стартового размера
+    if(len >= 12){
+      this.name = genAdultName();
+      this.isAdult = true;
+    } else {
+      this.name = 'Пиздюк-'+this.id;
+      this.isAdult = false;
+    }
   }
 
   get size(){ return this.segments.length; }
@@ -769,27 +811,46 @@ class Creature {
       const h3 = this.head();
       const depthFactor = Math.max(0, 1 - h3.y / GROUND_Y);
       const weightPenalty = Math.max(0.3, 1 - Math.max(0, this.weight - 4) / 20);
-      const photoBase = this.socialStatus==='mega'?2.5:
-                        this.socialStatus==='empire'?2.0:
-                        this.socialStatus==='colony'?1.5:1.2;
-      this.energy += photoBase * this.genes.photoRate * seasonPhotoMult() * (0.4 + 0.6 * depthFactor * weightPenalty);
+      const photoBase = this.socialStatus==='mega'?2.0:
+                        this.socialStatus==='empire'?1.5:
+                        this.socialStatus==='colony'?1.2:1.0;
+
+      // конкуренция за свет: чем больше особей своего вида рядом вверху — тем меньше света
+      // фотосинтетики (высокий photoRate) страдают от своих же сильнее
+      const lightCompetition = Math.max(0.4, 1 - (this.speciesFraction || 0) * this.genes.photoRate * 0.8);
+
+      this.energy += photoBase * this.genes.photoRate * seasonPhotoMult()
+                   * (0.3 + 0.7 * depthFactor * weightPenalty)
+                   * lightCompetition;
     }
 
     // метаболизм — растёт с размером, создаёт естественную смертность
-    const metaBase = this.socialStatus==='mega'?0.003:
-                    this.socialStatus==='empire'?0.004:
-                    this.socialStatus==='colony'?0.005:0.006;
-    // крупные существа дорого обходятся — естественный отбор
-    this.energy -= (night ? 0.002 : (metaBase + this.size*0.001)) * this.genes.metabolism * seasonMetaMult();
+    const metaBase = this.socialStatus==='mega'?0.002:
+                    this.socialStatus==='empire'?0.003:
+                    this.socialStatus==='colony'?0.003:0.004;
+    this.energy -= (night ? 0.001 : (metaBase + this.size*0.0005)) * this.genes.metabolism * seasonMetaMult();
     if(this.energy <= 0){ this.die(); return; }
 
-    // вес: сегменты + энергия → тяжелее = ниже
     this.weight = this.size * (1 + Math.min(1, this.energy / 200));
 
-    // видовой баланс — умеренное давление для долгосрочного разнообразия
-    if(this.speciesFraction > 0.40)      this.energy -= 0.25;
-    else if(this.speciesFraction > 0.25) this.energy -= 0.08;
-    else if(this.speciesFraction < 0.06) this.energy += 0.3;
+    // ── ЧАСТОТНО-ЗАВИСИМЫЙ ОТБОР ──
+    // редкий вид получает буст, доминант получает штраф
+    // это имитирует ненасыщенную экологическую нишу
+    const frac = this.speciesFraction || 0;
+    if(frac < 0.05){
+      this.energy += 0.5;  // редкий — ниша свободна
+    } else if(frac > 0.5){
+      this.energy -= (frac - 0.5) * 1.5;  // доминант — перенаселение своей ниши
+    }
+
+    // ── ХИЩНИК-ЖЕРТВА: агрессивные виды давят на пассивных ──
+    // высокая агрессия = тратит энергию на поиск жертв
+    // низкая агрессия = пассивный, но страдает от агрессоров
+    // эффект: нет одновременно много хищников И много жертв → осцилляция
+    if(this.genes.aggression > 0.6 && this.speciesFraction > 0.2){
+      // слишком много хищников — истощают друг друга и жертв
+      this.energy -= (this.genes.aggression - 0.6) * this.speciesFraction * 2.0;
+    }
 
     // вертикальный дрейф по весу — мягкий, раз в 40 тиков
     // не перезаписывает dy жёстко, а добавляет вертикальное смещение вероятностно
@@ -828,22 +889,23 @@ class Creature {
     }
 
     // размножение (заблокировано ночью и при перенаселении)
-    const pop = creatures.filter(cr=>cr.alive).length;
+    const pop = (tick._alive||creatures.filter(cr=>cr.alive)).length;
+    const wpop = tick._wpop || weightedPop(creatures);
     const reproOk = this.socialStatus==='solo'
-        ? (!night && pop<180 && this.size>=8  && this.energy>120)
-        : (pop<180 && this.size>=6 && this.energy>80); // колонии/империи/меги размножаются и ночью
+        ? (!night && wpop<230 && this.size>=8 && this.energy>80)
+        : (wpop<230 && this.size>=6 && this.energy>60);
     if(reproOk){
       this.reproTimer++;
-      if(this.reproTimer > 200){ this.reproduce(); this.reproTimer=0; }
+      if(this.reproTimer > 300){ this.reproduce(); this.reproTimer=0; }
     } else {
       this.reproTimer = 0;
     }
 
     // === СТАРЕНИЕ — естественная смерть ===
     // каждый вид живёт своё время: одиночки короче, мегаструктуры дольше
-    const maxAge = this.socialStatus==='mega'   ? 40000 :
-                   this.socialStatus==='empire' ? 28000 :
-                   this.socialStatus==='colony' ? 18000 : 10000;
+    const maxAge = this.socialStatus==='mega'   ? 80000 :
+                   this.socialStatus==='empire' ? 55000 :
+                   this.socialStatus==='colony' ? 38000 : 22000;
     // вероятность смерти от старости нарастает после половины жизни
     if(this.age > maxAge * 0.5){
       const oldness = (this.age - maxAge*0.5) / (maxAge*0.5);
@@ -855,7 +917,7 @@ class Creature {
     const growThresh = this.socialStatus==='mega'?80:
                         this.socialStatus==='empire'?100:
                         this.socialStatus==='colony'?120:150;
-    if(this.energy > growThresh && this.len < 20 && this.age % 150 === 0){
+    if(this.energy > growThresh && this.len < 20 && (this.age + this.ageOffset) % 150 === 0){
       this.grow();
     }
 
@@ -887,12 +949,16 @@ class Creature {
     const h = this.head();
     let nearEnemy=null, nearFriend=null, nearCorpse=null;
     let dE=9999, dF=9999, dC=9999;
+    let sameColorNear=0; // сколько своих в радиусе 8
 
     for(let cr of creatures){
       if(!cr.alive||cr===this) continue;
       const d = Math.hypot(h.x-cr.head().x, h.y-cr.head().y);
       if(cr.color!==this.color){ if(d<dE){dE=d;nearEnemy=cr;} }
-      else                     { if(d<dF){dF=d;nearFriend=cr;} }
+      else {
+        if(d<dF){dF=d;nearFriend=cr;}
+        if(d<8) sameColorNear++;
+      }
     }
 
     // поиск трупов для поедания
@@ -925,6 +991,15 @@ class Creature {
         this.dx=Math.round(Math.cos(a)); this.dy=Math.round(Math.sin(a));
       }
       if(h.x<=1)this.dx=1; if(h.x>=COLS-2)this.dx=-1; if(h.y<=2)this.dy=1;
+      return;
+    }
+
+    // территориальное рассеивание — убегаем от перенаселения своих
+    if(sameColorNear >= 4 && this.socialStatus==='solo'){
+      // слишком тесно — уходим в сторону от центра своей группы
+      const a = Math.atan2(nearFriend ? h.y-nearFriend.head().y : 0,
+                           nearFriend ? h.x-nearFriend.head().x : Math.random()-0.5);
+      this.dx=Math.round(Math.cos(a)); this.dy=Math.round(Math.sin(a));
       return;
     }
 
@@ -1031,6 +1106,15 @@ class Creature {
 
   step(){
     const h = this.head();
+    // если голова оказалась в почве — выталкиваем вверх
+    if(soil[h.y]&&soil[h.y][h.x]&&soil[h.y][h.x].solid){
+      for(let dy2=1; dy2<=4; dy2++){
+        const ty=h.y-dy2;
+        if(ty>=0 && !(soil[ty]&&soil[ty][h.x]&&soil[ty][h.x].solid)){
+          this.segments[0].y=ty; break;
+        }
+      }
+    }
     let nx = Math.max(0,Math.min(COLS-1, h.x+this.dx));
     let ny = Math.max(1,Math.min(ROWS-1, h.y+this.dy));
 
@@ -1070,24 +1154,34 @@ class Creature {
     for(let i=0;i<creatures.length;i++){
       const en=creatures[i];
       if(!en.alive||en===this||en.color===this.color) continue;
+      let hit=false;
       for(let seg of en.segments){
-        if(seg.x===nx&&seg.y===ny){
-          if(this.size>=en.size){
-            this.energy+=en.energy*0.7;
-            registerBattle(nx);
-            en.dieAsCorpse();
-            this.grow();
-            addLog('⚔ '+colorName(this.color)+' поглощает '+colorName(en.color)+'!');
-            if(selectedCreature&&selectedCreature.id===this.id)
-              addCreatureLog('⚔ поглотил '+colorName(en.color));
-          } else {
-            this.energy-=20;
-            if(selectedCreature&&selectedCreature.id===this.id)
-              addCreatureLog('💥 атакован '+colorName(en.color));
-          }
-          break;
-        }
+        if(seg.x===nx&&seg.y===ny){ hit=true; break; }
       }
+      if(!hit) continue;
+
+      const mySize=this.size, enSize=en.size;
+
+      if(mySize > enSize + 2){
+        // я значительно крупнее — поглощаю
+        if(!this._lastEat) this._lastEat=0;
+        if(cycle - this._lastEat < 500){ this.dx=-this.dx; break; }
+        this.energy += en.energy*0.7;
+        this._lastEat = cycle;
+        registerBattle(nx);
+        en.dieAsCorpse();
+        addLog('⚔ '+colorName(this.color)+'('+mySize+') ест '+colorName(en.color)+'('+enSize+')');
+      } else if(enSize > mySize + 2){
+        // враг значительно крупнее — убегаю
+        this.energy -= 10;
+        this.dx = -this.dx;
+        this.dy = Math.random()<0.5 ? -1 : 1;
+      } else {
+        // примерно равны — взаимный урон
+        this.energy -= 4; en.energy -= 4;
+        this.dx = -this.dx;
+      }
+      break;
     }
 
     this.segments.unshift({x:nx,y:ny});
@@ -1114,18 +1208,15 @@ class Creature {
   }
 
   reproduce(){
-    const mutRate = geneticStorm?0.5:0.13;
     let col = this.color;
-    // считаем текущую долю мутантов
-    const totalAlive = creatures.filter(x=>x.alive).length;
-    const mutantAlive = creatures.filter(x=>x.alive && !STARTER_COLORS.has(x.color)).length;
-    const mutantFraction = totalAlive > 0 ? mutantAlive / totalAlive : 0;
-    const canMutate = mutantFraction < 0.30; // до 30% мутантов — эволюция не замирает
-    if(canMutate && Math.random()<mutRate){
+    // мутация ТОЛЬКО при генетическом шторме — в обычных условиях только дрейф генов
+    if(geneticStorm && Math.random()<0.5){
       const unused=PALETTE.filter(p=>!activeColors.has(p));
-      col=unused.length>0?unused[0]:PALETTE[Math.floor(Math.random()*PALETTE.length)];
-      activeColors.add(col);
-      addLog(`🧬 Мутация! Новый вид: ${colorName(col)}`);
+      col=unused.length>0?unused[0]:col; // новый цвет только если есть незанятые
+      if(col!==this.color){
+        activeColors.add(col);
+        addLog(`🧬 Шторм породил новый вид: ${colorName(col)}`);
+      }
     }
     const startLen = this.socialStatus==='mega'  ? 4+Math.floor(Math.random()*2) :
                       this.socialStatus==='empire'? 3+Math.floor(Math.random()*2) :
@@ -1136,15 +1227,17 @@ class Creature {
       Math.max(1,Math.min(COLS-2, h.x+ox)),
       Math.max(2,h.y-2), col, startLen
     );
-    child.energy=60;
+    child.energy = 80 + startLen * 20; // достаточно чтобы выжить и вырасти
     child.seekingColony=(startLen===1);
-    // передача генов: мутант получает свежие гены, потомок — немного изменённые родительские
     if(col !== this.color){
-      child.genes = mutateGenes(defaultGenes(), 0.4); // мутант — широкие вариации
+      child.genes = mutateGenes(defaultGenes(), 0.4);
       genePool[col] = {...child.genes};
     } else {
-      child.genes = mutateGenes(this.genes, 0.05); // потомок — небольшой дрейф
-      genePool[col] = child.genes; // обновляем пул вида
+      // генетический дрейф: в экстремальных условиях мутации сильнее
+      const season = getSeason();
+      const stress = drought ? 0.12 : season==='winter' ? 0.06 : geneticStorm ? 0.3 : 0.02;
+      child.genes = mutateGenes(this.genes, stress);
+      genePool[col] = child.genes;
     }
     creatures.push(child);
     this.offspring++;
@@ -1166,41 +1259,19 @@ class Creature {
 
   // смерть с созданием трупа (не сразу в почву)
   dieAsCorpse(){
+    if(!this.alive) return; // уже мёртв — не создаём второй труп
     this.alive=false;
-    // разрываем мостик при смерти
     for(let cr of creatures){ if(cr.bondedTo===this.id) cr.bondedTo=null; }
     corpses.push(new Corpse(this.segments, this.color));
     addLog(`💀 ${colorName(this.color)} (${this.size}сег.) пало`);
   }
 
   die(){
+    if(!this.alive) return; // уже мёртв — не создаём второй труп
     this.alive=false;
     for(let x of creatures){ if(x.bondedTo===this.id) x.bondedTo=null; }
     if(this.segments.length > 0){
-      const cx = Math.round(this.segments.reduce((s,seg)=>s+seg.x,0)/this.segments.length);
-      const cy = Math.round(this.segments.reduce((s,seg)=>s+seg.y,0)/this.segments.length);
-      const n = this.segments.length;
-      const minRadius = Math.ceil((n-5)/2);
-      const radius = Math.max(2, Math.floor(Math.sqrt(n) * 1.6), minRadius);
-      const slots = [];
-      for(let dx=0; dx<=radius+2; dx++){
-        for(let sign of (dx===0?[0]:[-1,1])){
-          const bx=cx+dx*sign; if(bx<0||bx>=COLS) continue;
-          const gy=getSoilBottom(bx, cy);
-          if(gy>=0) slots.push({bx,gy,dist:dx});
-        }
-      }
-      slots.sort((a,b)=>a.dist-b.dist);
-      const placed=new Set();
-      let count=0;
-      for(let s of slots){
-        if(count>=n) break;
-        const key=s.bx+'_'+s.gy;
-        if(placed.has(key)) continue;
-        placed.add(key);
-        setSoil(s.bx,s.gy,this.color);
-        count++;
-      }
+      corpses.push(new Corpse(this.segments, this.color));
     }
     if(Math.random()<0.15) addLog(`💀 ${colorName(this.color)} (${this.size}сег.) угасло`);
   }
@@ -1269,7 +1340,7 @@ function hexRgb(hex){
 // ── РЕНДЕР ─────────────────────────────────────────────────────────
 function render(){
   ctx.clearRect(0,0,W,H);
-  const alive = creatures.filter(cr=>cr.alive); // нужно для ореолов и HUD
+  const alive = creatures.filter(cr=>cr.alive); // render вне tick — своя фильтрация
   const night = isNight();
   const prog  = night ? (cycle%6000-4000)/2000 : (cycle%6000)/4000;
 
@@ -1315,6 +1386,12 @@ function render(){
   // осенний тёплый оттенок
   if(season==='autumn' && !night){
     ctx.fillStyle='rgba(80,30,0,0.07)';
+    ctx.fillRect(0,0,W,H);
+  }
+  // оверлей массового вымирания
+  if(extinctionLevel > 0.5){
+    const alpha = (extinctionLevel - 0.5) * 0.3;
+    ctx.fillStyle=`rgba(120,80,0,${alpha})`;
     ctx.fillRect(0,0,W,H);
   }
   if(drought){
@@ -1371,28 +1448,32 @@ function render(){
     ctx.fillRect(0,0,W,H);
   }
 
-  // почва — кешируем цвет в объекте чтобы не пересчитывать каждый кадр
-  for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
-    const s=soil[y]&&soil[y][x];
-    if(!s||!s.solid) continue;
-    if(s.stardust){
-      ctx.fillStyle=`rgba(255,235,180,${0.35+Math.sin(cycle*0.25+x*0.5)*0.18})`;
-      s._css = null; // stardust анимированный — не кешируем
-    } else if(!s._css) {
-      if(s.color){
-        const[r,g,b]=hexRgb(s.color);
-        const sh=s.shade||0.42;
-        s._css=`rgb(${Math.floor(r*sh)},${Math.floor(g*sh)},${Math.floor(b*sh)})`;
+  // почва — offscreen canvas, перерисовываем только при изменении
+  if(soilDirty && soilCtx){
+    soilCtx.fillStyle='#000'; soilCtx.fillRect(0,0,W,H);
+    for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
+      const s=soil[y]&&soil[y][x];
+      if(!s||!s.solid) continue;
+      if(s.stardust){
+        soilCtx.fillStyle=`rgba(255,235,180,0.5)`;
       } else {
-        const d=(y-GROUND_Y)/10, v=Math.floor(14+d*8);
-        s._css=`rgb(${v},${v+2},${v+4})`;
+        if(!s._css){
+          if(s.color){
+            const[r,g,b]=hexRgb(s.color);
+            const sh=s.shade||0.42;
+            s._css=`rgb(${Math.floor(r*sh)},${Math.floor(g*sh)},${Math.floor(b*sh)})`;
+          } else {
+            const d=(y-GROUND_Y)/10, v=Math.floor(14+d*8);
+            s._css=`rgb(${v},${v+2},${v+4})`;
+          }
+        }
+        soilCtx.fillStyle=s._css;
       }
-      ctx.fillStyle=s._css;
-    } else {
-      ctx.fillStyle=s._css;
+      soilCtx.fillRect(x*CELL,y*CELL,CELL,CELL);
     }
-    ctx.fillRect(x*CELL,y*CELL,CELL,CELL);
+    soilDirty=false;
   }
+  if(soilCanvas) ctx.drawImage(soilCanvas,0,0);
 
   // территория империй — отключена на Pi (дорогой проход ROWS*COLS с rgba)
 
@@ -1479,14 +1560,22 @@ function render(){
     for(let i=cr.segments.length-1;i>=0;i--){
       const seg=cr.segments[i];
       const isHead=i===0;
-      if(cr.inEmpire&&isHead){ /* shadowBlur отключён для Pi */ }
-      const br=isHead?1.0:Math.max(0.4,0.9-i*0.022);
-      const[r,g,b]=hexRgb(cr.color);
-      ctx.fillStyle=`rgba(${Math.floor(r*br*nightDim)},${Math.floor(g*br*nightDim)},${Math.floor(b*br*nightDim)},${alpha})`;
+      const br2=isHead?1.0:Math.max(0.4,0.9-i*0.022);
+      // химера: каждый сегмент своего цвета по кругу
+      const segColor = (cr.chimerColors && cr.chimerColors.length>1)
+        ? cr.chimerColors[i % cr.chimerColors.length]
+        : cr.color;
+      const[r,g,b]=hexRgb(segColor);
+      ctx.fillStyle=`rgba(${Math.floor(r*br2*nightDim)},${Math.floor(g*br2*nightDim)},${Math.floor(b*br2*nightDim)},${alpha})`;
       const p=isHead?0:1;
-      // эмбрион мигает
       if(cr.isEmbryo && (cycle%20)<10){ ctx.fillStyle='rgba(255,255,255,0.4)'; }
       ctx.fillRect(seg.x*CELL+p,seg.y*CELL+p,CELL-p*2,CELL-p*2);
+      // химеры имеют дополнительное свечение
+      if(cr.chimerColors && cr.chimerColors.length>1 && isHead){
+        ctx.strokeStyle=`rgba(255,255,255,0.6)`;
+        ctx.lineWidth=1;
+        ctx.strokeRect(seg.x*CELL+0.5,seg.y*CELL+0.5,CELL-1,CELL-1);
+      }
       ctx.shadowBlur=0;
     }
 
@@ -1567,28 +1656,133 @@ function render(){
     ctx.fillRect(h.x*CELL+1, h.y*CELL+CELL-2, barW, 2);
   }
 
+  // ── ВИЗУАЛЬНЫЕ КЛАСТЕРЫ — рисуем раз в 30 тиков (кеш) ──
+  // Империи: коронавирус (шар + щупальца)
+  // Меги: решётка
+  if(cycle % 30 === 0 || !window._clusterCache){
+    window._clusterCache = { empire:{}, mega:{} };
+    // собираем группы по clusterName
+    for(let cr of alive){
+      if(!cr.clusterName) continue;
+      const cc = window._clusterCache;
+      if(cr.socialStatus==='empire'){
+        if(!cc.empire[cr.clusterName]) cc.empire[cr.clusterName]={members:[],color:cr.color};
+        cc.empire[cr.clusterName].members.push(cr);
+      } else if(cr.socialStatus==='mega'){
+        if(!cc.mega[cr.clusterName]) cc.mega[cr.clusterName]={members:[],color:cr.color};
+        cc.mega[cr.clusterName].members.push(cr);
+      }
+    }
+  }
+  const cc = window._clusterCache;
+
+  // ── ИМПЕРИИ — коронавирус ──
+  for(let name in cc.empire){
+    const grp = cc.empire[name];
+    const mems = grp.members.filter(x=>x.alive);
+    if(mems.length < 3) continue;
+    const[r,g,b]=hexRgb(grp.color);
+    // центр масс кластера
+    const cx = mems.reduce((s,x)=>s+x.head().x,0)/mems.length;
+    const cy = mems.reduce((s,x)=>s+x.head().y,0)/mems.length;
+    const cpx = cx*CELL+CELL/2, cpy = cy*CELL+CELL/2;
+    const pulse = 0.4+Math.sin(cycle*0.04)*0.15;
+
+    // центральный шар
+    const ballR = 3 + Math.min(8, mems.length*0.4);
+    const bg = ctx.createRadialGradient(cpx,cpy,0,cpx,cpy,ballR);
+    bg.addColorStop(0,`rgba(${r},${g},${b},${pulse*0.9})`);
+    bg.addColorStop(1,`rgba(${r},${g},${b},0)`);
+    ctx.fillStyle=bg;
+    ctx.beginPath(); ctx.arc(cpx,cpy,ballR,0,Math.PI*2); ctx.fill();
+
+    // щупальца к каждому члену
+    ctx.lineWidth=1;
+    for(let m of mems){
+      const hx=m.head().x*CELL+CELL/2, hy=m.head().y*CELL+CELL/2;
+      const dist=Math.hypot(hx-cpx,hy-cpy);
+      if(dist<4||dist>180) continue;
+      // линия щупальца — тонкая, угасает к концу
+      const grad=ctx.createLinearGradient(cpx,cpy,hx,hy);
+      grad.addColorStop(0,`rgba(${r},${g},${b},${pulse*0.6})`);
+      grad.addColorStop(0.7,`rgba(${r},${g},${b},${pulse*0.3})`);
+      grad.addColorStop(1,`rgba(${r},${g},${b},0)`);
+      ctx.strokeStyle=grad;
+      ctx.beginPath(); ctx.moveTo(cpx,cpy); ctx.lineTo(hx,hy); ctx.stroke();
+      // утолщение на конце щупальца
+      ctx.fillStyle=`rgba(${r},${g},${b},${pulse*0.5})`;
+      ctx.beginPath(); ctx.arc(hx,hy,2,0,Math.PI*2); ctx.fill();
+    }
+  }
+
+  // ── МЕГИ — решётка из самих существ ──
+  for(let name in cc.mega){
+    const grp = cc.mega[name];
+    const mems = grp.members.filter(x=>x.alive);
+    if(mems.length < 4) continue;
+    const[r,g,b]=hexRgb(grp.color);
+    const pulse = 0.5+Math.sin(cycle*0.02+42)*0.15;
+
+    // рисуем линии между всеми парами ближе 18 клеток — получается решётка
+    const MAX_BOND_DIST = 18 * CELL;
+    ctx.lineWidth=1.5;
+    for(let i=0;i<mems.length;i++){
+      const a=mems[i];
+      const ax=a.head().x*CELL+CELL/2, ay=a.head().y*CELL+CELL/2;
+      for(let j=i+1;j<mems.length;j++){
+        const b=mems[j];
+        const bx=b.head().x*CELL+CELL/2, by=b.head().y*CELL+CELL/2;
+        const d=Math.hypot(ax-bx,ay-by);
+        if(d>MAX_BOND_DIST) continue;
+        // яркость обратно пропорциональна дистанции
+        const strength=(1-d/MAX_BOND_DIST)*pulse;
+        ctx.strokeStyle=`rgba(${r},${g},${b},${strength*0.7})`;
+        ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(bx,by); ctx.stroke();
+        // узел на середине — маркер решётки
+        const mx2=(ax+bx)/2, my2=(ay+by)/2;
+        ctx.fillStyle=`rgba(${r},${g},${b},${strength*0.5})`;
+        ctx.fillRect(mx2-1.5,my2-1.5,3,3);
+      }
+      // узел на каждом существе
+      ctx.fillStyle=`rgba(${r},${g},${b},${pulse*0.8})`;
+      ctx.beginPath(); ctx.arc(ax,ay,3,0,Math.PI*2); ctx.fill();
+    }
+    // имя структуры над центром масс
+    const cx2=mems.reduce((s,x)=>s+x.head().x,0)/mems.length;
+    const cy2=mems.reduce((s,x)=>s+x.head().y,0)/mems.length;
+    ctx.fillStyle=`rgba(${r},${g},${b},${pulse*0.9})`;
+    ctx.font='bold 9px monospace';
+    ctx.fillText(name, cx2*CELL-name.length*2.5, cy2*CELL-6);
+  }
+
   // ── ЛАЗЕРЫ ──
   for(let l of lasers){
     if(l.timer<=0) continue;
-    const alpha = l.timer / (l.isMega ? 10 : 8);
+    const maxTimer = l.isMega ? 14 : 10;
+    const alpha = l.timer / maxTimer;
     const[r,g,b]=hexRgb(l.color);
-    // сам луч — яркая линия
-    ctx.strokeStyle=`rgba(${r},${g},${b},${alpha*0.9})`;
+    // широкое свечение цвета стрелявшего
+    ctx.strokeStyle=`rgba(${r},${g},${b},${alpha*0.4})`;
+    ctx.lineWidth=l.isMega?10:6;
+    ctx.beginPath();
+    ctx.moveTo(l.x1*CELL+CELL/2, l.y1*CELL+CELL/2);
+    ctx.lineTo(l.x2*CELL+CELL/2, l.y2*CELL+CELL/2);
+    ctx.stroke();
+    // яркий луч
+    ctx.strokeStyle=`rgba(${r},${g},${b},${Math.min(1,alpha*1.2)})`;
     ctx.lineWidth=l.isMega?2.5:1.5;
     ctx.beginPath();
     ctx.moveTo(l.x1*CELL+CELL/2, l.y1*CELL+CELL/2);
     ctx.lineTo(l.x2*CELL+CELL/2, l.y2*CELL+CELL/2);
     ctx.stroke();
-    // свечение вокруг — широкая полупрозрачная линия
-    ctx.strokeStyle=`rgba(${r},${g},${b},${alpha*0.25})`;
-    ctx.lineWidth=l.isMega?7:4;
-    ctx.beginPath();
-    ctx.moveTo(l.x1*CELL+CELL/2, l.y1*CELL+CELL/2);
-    ctx.lineTo(l.x2*CELL+CELL/2, l.y2*CELL+CELL/2);
-    ctx.stroke();
-    // вспышка в точке попадания
-    ctx.fillStyle=`rgba(255,255,255,${alpha*0.6})`;
-    ctx.fillRect(l.x2*CELL, l.y2*CELL, CELL, CELL);
+    // источник — яркая точка цвета стрелявшего
+    ctx.fillStyle=`rgba(${r},${g},${b},${alpha})`;
+    ctx.beginPath(); ctx.arc(l.x1*CELL+CELL/2, l.y1*CELL+CELL/2, l.isMega?4:3, 0, Math.PI*2); ctx.fill();
+    // вспышка попадания — цвет стрелявшего + белый центр
+    ctx.fillStyle=`rgba(${r},${g},${b},${alpha*0.9})`;
+    ctx.beginPath(); ctx.arc(l.x2*CELL+CELL/2, l.y2*CELL+CELL/2, l.isMega?6:4, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle=`rgba(255,255,255,${alpha*0.9})`;
+    ctx.beginPath(); ctx.arc(l.x2*CELL+CELL/2, l.y2*CELL+CELL/2, l.isMega?2:1.5, 0, Math.PI*2); ctx.fill();
   }
 
   // левиафан — рисуется поверх существ
@@ -1676,8 +1870,9 @@ function render(){
   // 2. Сутки
   document.getElementById('sCycle').textContent = Math.floor(cycle/3000);
 
-  // 3. Существа
-  document.getElementById('sCreatures').textContent = aliveList.length;
+  // 3. Существа (взвешенная популяция)
+  const wpopHud = weightedPop(aliveList);
+  document.getElementById('sCreatures').textContent = aliveList.length+' ('+wpopHud+')';
 
   // 4. Споры
   let sporeCount=0;
@@ -1718,6 +1913,13 @@ function render(){
   document.getElementById('sMegas').textContent    = nMega;
   document.getElementById('sCataclysms').textContent =
     `${cataclysms.meteor}/${cataclysms.drought}/${cataclysms.storm}/${cataclysms.flood}/${cataclysms.leviathan}`;
+
+  // уровень вымирания
+  if(extinctionLevel > 0.3){
+    const pct = Math.round(extinctionLevel*100);
+    document.getElementById('sPhase').innerHTML =
+      `<b style="color:${extinctionLevel>0.8?'#ff6600':'#aa8800'}">☠ Вымирание ${pct}%</b>`;
+  }
 
   const phaseEl=document.getElementById('sPhase');
   phaseEl.innerHTML=night
@@ -1763,19 +1965,29 @@ function render(){
 }
 
 // ── ТИК ────────────────────────────────────────────────────────────
-// ── СИСТЕМА ИМЁН ───────────────────────────────────────────────────
-const NAMES_FIRST = ['Иван','Пётр','Павел','Михаил','Алексей','Сергей','Дмитрий','Андрей','Николай','Фёдор','Василий','Григорий','Владимир','Степан','Тимофей','Борис','Глеб','Святослав','Ярослав','Всеволод'];
-const NAMES_PATRON = ['Иванович','Петрович','Павлович','Михайлович','Алексеевич','Сергеевич','Дмитриевич','Андреевич','Николаевич','Фёдорович','Васильевич','Григорьевич','Владимирович','Степанович','Тимофеевич','Борисович','Глебович','Святославович','Ярославович','Всеволодович'];
-const EMPIRE_NAMES = ['Хаоса','Огня','Тьмы','Пустоты','Безумия','Опустошения','Крови','Теней','Вечности','Забвения','Железа','Пепла','Бури','Льда','Скорби','Ярости','Гибели','Рока','Праха','Бездны'];
-const MEGA_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
-let clusterNames = {}; // clusterNames[rootId] = имя кластера
-let colonyCounter = 0;
+// ── ГЕНЕРАТОРЫ ИМЁН ────────────────────────────────────────────────
+const NAMES_MALE_FIRST  = ['Иван','Пётр','Павел','Михаил','Алексей','Сергей','Дмитрий','Андрей','Николай','Фёдор','Василий','Григорий','Владимир','Степан','Тимофей','Борис','Глеб','Святослав','Ярослав','Всеволод'];
+const NAMES_MALE_PATRON = ['Иванович','Петрович','Павлович','Михайлович','Алексеевич','Сергеевич','Дмитриевич','Андреевич','Николаевич','Фёдорович','Васильевич','Григорьевич','Владимирович','Степанович','Тимофеевич','Борисович','Глебович','Святославович','Ярославович','Всеволодович'];
+const NAMES_FEM_FIRST   = ['Людмила','Наталья','Светлана','Ольга','Татьяна','Елена','Анна','Мария','Вера','Надежда','Галина','Зинаида','Тамара','Валентина','Нина','Лариса','Ирина','Жанна','Аглая','Ульяна'];
+const NAMES_FEM_PATRON  = ['Ивановна','Петровна','Павловна','Михайловна','Алексеевна','Сергеевна','Дмитриевна','Андреевна','Николаевна','Фёдоровна','Васильевна','Григорьевна','Владимировна','Степановна','Тимофеевна','Борисовна','Глебовна','Святославовна','Ярославовна','Всеволодовна'];
+// Для обратной совместимости
+const NAMES_FIRST  = NAMES_MALE_FIRST;
+const NAMES_PATRON = NAMES_MALE_PATRON;
+
+const EMPIRE_NAMES  = ['Хаоса','Огня','Тьмы','Пустоты','Безумия','Опустошения','Крови','Теней','Вечности','Забвения','Железа','Пепла','Бури','Льда','Скорби','Ярости','Гибели','Рока','Праха','Бездны','Зла','Добра','Боли','Страдания','Величия','Ужаса','Смерти','Рассвета','Заката','Судьбы'];
+const MEGA_LETTERS  = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // убраны похожие на цифры
 
 function genAdultName(){
-  const f = NAMES_FIRST[Math.floor(Math.random()*NAMES_FIRST.length)];
-  const p = NAMES_PATRON[Math.floor(Math.random()*NAMES_PATRON.length)];
-  return f+' '+p;
+  if(Math.random()<0.5){
+    const f = NAMES_MALE_FIRST[Math.floor(Math.random()*NAMES_MALE_FIRST.length)];
+    const p = NAMES_MALE_PATRON[Math.floor(Math.random()*NAMES_MALE_PATRON.length)];
+    return f+' '+p;
+  } else {
+    const f = NAMES_FEM_FIRST[Math.floor(Math.random()*NAMES_FEM_FIRST.length)];
+    const p = NAMES_FEM_PATRON[Math.floor(Math.random()*NAMES_FEM_PATRON.length)];
+    return f+' '+p;
+  }
 }
 function genEmpireName(){
   const n = EMPIRE_NAMES[Math.floor(Math.random()*EMPIRE_NAMES.length)];
@@ -1785,8 +1997,9 @@ function genMegaName(){
   const a = MEGA_LETTERS[Math.floor(Math.random()*MEGA_LETTERS.length)];
   const b = MEGA_LETTERS[Math.floor(Math.random()*MEGA_LETTERS.length)];
   const c = MEGA_LETTERS[Math.floor(Math.random()*MEGA_LETTERS.length)];
-  const n = 10+Math.floor(Math.random()*90);
-  return a+b+c+'-'+n;
+  const n = 1+Math.floor(Math.random()*999);
+  const pad = n<10?'0'+n:n<100?n:''+n;
+  return a+b+c+'-'+pad;
 }
 function genColonyName(){
   colonyCounter++;
@@ -1794,13 +2007,25 @@ function genColonyName(){
 }
 // Запускается раз в 60 тиков. Union-Find по цвету.
 // Гистерезис: понижение статуса только после 2 подряд циклов ниже порога.
-const CLUSTER_RADIUS = 22;    // клетки — дистанция связи между членами
-const THRESHOLDS = { mega:18, empire:8, colony:3 }; // мин. размер кластера
-let clusterDowngrade = {}; // clusterDowngrade[id] = число циклов ниже порога
+const CLUSTER_RADIUS = 15;
+const THRESHOLDS = { mega:50, empire:20, colony:4 }; // мега — очень редко
+let clusterDowngrade = {};
+
+// взвешенная популяция: мега=10, империя=5, колония=1, соло=1
+function weightedPop(list){
+  let w=0;
+  for(let cr of list){
+    if(!cr.alive) continue;
+    if(cr.socialStatus==='mega')        w+=10;
+    else if(cr.socialStatus==='empire') w+=5;
+    else                                w+=1;
+  }
+  return w;
+}
 
 function detectClusters(){
   // собираем только живых взрослых (≥12 сег)
-  const adults = creatures.filter(x=>x.alive && x.size>=12);
+  const adults = creatures.filter(x=>x.alive && x.size>=16);
 
   // Union-Find
   const parent = {};
@@ -1837,24 +2062,33 @@ function detectClusters(){
     const prevStatus=cr.socialStatus;
 
     let newStatus;
-    if     (sz>=THRESHOLDS.mega)   newStatus='mega';
+    if(sz>=THRESHOLDS.mega){
+      // мега только если существо давно в империи (стаж)
+      const empireSince = cr._empireSince || cycle;
+      if(!cr._empireSince && (prevStatus==='empire'||prevStatus==='mega')) cr._empireSince=cycle;
+      const empireTicks = cycle - (cr._empireSince||cycle);
+      newStatus = empireTicks >= 8000 ? 'mega' : 'empire'; // >1 суток в империи
+    }
     else if(sz>=THRESHOLDS.empire) newStatus='empire';
     else if(sz>=THRESHOLDS.colony) newStatus='colony';
     else                           newStatus='solo';
 
     // повышение — мгновенное
     // понижение — только после 2 циклов подряд
-    if(newStatus < prevStatus || // строковое сравнение не работает, используем веса
-       statusWeight(newStatus) < statusWeight(prevStatus)){
+    if(statusWeight(newStatus) < statusWeight(prevStatus)){
       clusterDowngrade[cr.id]=(clusterDowngrade[cr.id]||0)+1;
-      if(clusterDowngrade[cr.id]>=2) cr.socialStatus=newStatus;
-      else cr.socialStatus=prevStatus; // держим старый статус ещё цикл
+      // мегаструктуры и империи труднее деградируют — нужно больше циклов
+      const needed = prevStatus==='mega' ? 6 : prevStatus==='empire' ? 4 : 2;
+      if(clusterDowngrade[cr.id]>=needed) cr.socialStatus=newStatus;
+      else cr.socialStatus=prevStatus;
     } else {
       clusterDowngrade[cr.id]=0;
       cr.socialStatus=newStatus;
     }
 
     cr.inEmpire=(cr.socialStatus==='empire'||cr.socialStatus==='mega');
+    // сбрасываем стаж если деградировали ниже империи
+    if(cr.socialStatus==='solo'||cr.socialStatus==='colony') cr._empireSince=null;
 
     // имя кластера — присваивается при формировании, хранится по root
     if(cr.socialStatus!=='solo'){
@@ -1893,6 +2127,13 @@ function tick(){
   coolBattleHeat();
   updateBanner();
 
+  // кешируем живых раз в тик — не фильтруем снова и снова
+  const _alive = creatures.filter(cr=>cr.alive);
+  const _wpop  = weightedPop(_alive);
+  // делаем доступными для вложенных функций через замыкание
+  tick._alive = _alive;
+  tick._wpop  = _wpop;
+
   // === ГРАВИТАЦИЯ ПОЧВЫ — висящие блоки падают вниз ===
   if(cycle % 150 === 0){
     // проходим снизу вверх — блок падает если под ним пусто
@@ -1903,13 +2144,13 @@ function tick(){
         if(soil[y+1]&&soil[y+1][x]&&soil[y+1][x].solid) continue;
         // под блоком пусто — падаем вниз до первой опоры
         const falling = soil[y][x];
-        soil[y][x] = null;
+        soil[y][x] = null; soilDirty=true;
         // находим куда упасть
         let landY = y+1;
         while(landY+1 < ROWS && !(soil[landY+1]&&soil[landY+1][x]&&soil[landY+1][x].solid)){
           landY++;
         }
-        soil[landY][x] = falling;
+        soil[landY][x] = falling; soilDirty=true;
         if(falling._css) falling._css = null; // сбрасываем кеш
       }
     }
@@ -1925,7 +2166,7 @@ function tick(){
       const top = getSoilTop(ex);
       if(top < GROUND_Y - 4 && soil[top] && soil[top][ex]){
         const savedColor = soil[top][ex].color;
-        soil[top][ex] = null;
+        soil[top][ex] = null; soilDirty=true;
         const nx = ex + (Math.random()<0.5 ? -1 : 1);
         if(nx>=0 && nx<COLS){
           const nTop = getSoilTop(nx);
@@ -1937,19 +2178,172 @@ function tick(){
     }
   }
 
-  // === ЧИСТКА ПАМЯТИ — мёртвые объекты ===
-  // трупы убирают споры органически; массивы чистим только от совсем мёртвых
-  if(cycle % 3000 === 0){
+  // === ЕСТЕСТВЕННОЕ ВОЗРОЖДЕНИЕ ВИДОВ — из цветной почвы каждые ~12000 тиков ===
+  if(cycle % 12000 === 7777){ // нечётное смещение чтобы не совпадало с другими событиями
+    const aliveColors = new Set(creatures.filter(x=>x.alive).map(x=>x.color));
+    const extinctColors = [...PALETTE].filter(c=>!aliveColors.has(c));
+    if(extinctColors.length > 0 && Math.random() < 0.7){
+      // ищем блоки почвы этого цвета
+      const reviveCol = extinctColors[Math.floor(Math.random()*extinctColors.length)];
+      const soilBlocks = [];
+      for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
+        if(soil[y]&&soil[y][x]&&soil[y][x].color===reviveCol) soilBlocks.push({x,y});
+      }
+      const spawnX = soilBlocks.length>0
+        ? soilBlocks[Math.floor(Math.random()*soilBlocks.length)].x
+        : 5+Math.floor(Math.random()*(COLS-10));
+      const top = getSoilTop(spawnX);
+      for(let k=0;k<3;k++){
+        const child = new Creature(
+          Math.max(1,Math.min(COLS-2, spawnX+Math.floor(Math.random()*7)-3)),
+          Math.max(1,top-1), reviveCol, 1
+        );
+        child.energy=200; child.seekingColony=true;
+        if(!genePool[reviveCol]) genePool[reviveCol]=mutateGenes(defaultGenes(),0.2);
+        child.genes=mutateGenes(genePool[reviveCol],0.1);
+        creatures.push(child);
+      }
+      activeColors.add(reviveCol);
+      addLog('🌿 '+colorName(reviveCol)+' возродились из праха предков');
+    }
+  }
+  if(cycle % 500 === 0){
     creatures = creatures.filter(cr=>cr.alive);
     spores    = spores.filter(sp=>sp.alive);
     corpses   = corpses.filter(cp=>cp.alive && cp.segs.length > 0);
-    // чистим megaPositions от исчезнувших мег
     const liveMegaColors = new Set(creatures.filter(x=>x.alive&&x.socialStatus==='mega').map(x=>x.color));
     for(let col in megaPositions){ if(!liveMegaColors.has(col)) delete megaPositions[col]; }
+    // ограничиваем popHistory
+    for(let col in popHistory){
+      if(popHistory[col].length > 200) popHistory[col] = popHistory[col].slice(-200);
+    }
+  }
+  if(cycle % 3000 === 0){
+
+    // если всё вымерло — жизнь зарождается из цветной почвы (трупных осадков)
+    const livingNow = creatures.filter(x=>x.alive).length;
+    if(livingNow === 0){
+      // ищем цветные блоки почвы — остатки прошлых цивилизаций
+      const coloredSoil = [];
+      for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
+        if(soil[y]&&soil[y][x]&&soil[y][x].solid&&soil[y][x].color) coloredSoil.push({x,y,color:soil[y][x].color});
+      }
+      if(coloredSoil.length > 0){
+        // из нескольких случайных цветных блоков рождаются новые существа
+        const count = Math.min(6, coloredSoil.length);
+        const shuffled = coloredSoil.sort(()=>Math.random()-0.5);
+        for(let i=0;i<count;i++){
+          const s=shuffled[i];
+          const child=new Creature(s.x, Math.max(1,s.y-1), s.color, 2);
+          child.energy=180; creatures.push(child);
+        }
+        addLog('🌍 Жизнь зарождается заново из праха предков');
+      } else {
+        // совсем пусто — засеваем первичными
+        const col=PALETTE[Math.floor(Math.random()*PALETTE.length)];
+        activeColors.add(col);
+        for(let i=0;i<5;i++){
+          const x=5+Math.floor(Math.random()*(COLS-10));
+          const child=new Creature(x, Math.max(1,getSoilTop(x)-1), col, 2);
+          child.energy=200; creatures.push(child);
+        }
+        addLog('✨ Первичный бульон. Жизнь начинается снова.');
+      }
+    }
+  }
+
+  // === МАССОВОЕ ВЫМИРАНИЕ — 95% экрана в трупах ===
+  if(cycle % 120 === 0){
+    // считаем суммарные сегменты живых трупов
+    let totalCorpseSegs = 0;
+    for(let cp of corpses) if(cp.alive) totalCorpseSegs += cp.segs.length;
+    const LIVE_AREA = COLS * GROUND_Y; // клеток в живой зоне
+    extinctionLevel = Math.min(1, totalCorpseSegs / (LIVE_AREA * 0.95));
+
+    if(extinctionLevel >= 1 && !extinctionActive){
+      extinctionActive = true;
+      addLog('💀 МАССОВОЕ ВЫМИРАНИЕ. Трупы заполнили мир...');
+      showBanner('💀 МАССОВОЕ ВЫМИРАНИЕ', '#886600', 2000);
+    }
+
+    if(extinctionActive){
+      // 1. Споры едят трупы ВДВОЕ быстрее — увеличиваем их скорость временно
+      for(let sp of spores){
+        if(!sp.alive) continue;
+        sp.stepTimer += 3; // ускоряем
+      }
+
+      // 2. Из каждого трупа с шансом 15% рождается новая спора-санитар
+      if(Math.random() < 0.3){
+        const liveCorpses = corpses.filter(cp=>cp.alive&&cp.segs.length>0);
+        const sample = liveCorpses.slice(0, Math.min(5, liveCorpses.length));
+        for(let cp of sample){
+          if(Math.random()<0.15 && spores.length < 400){
+            const spSeg = cp.segs[Math.floor(Math.random()*cp.segs.length)];
+            const sp = new Spore(spSeg.x, Math.max(1, spSeg.y-1), cp.color);
+            spores.push(sp);
+          }
+        }
+      }
+
+      // 3. Если трупов стало меньше 60% — событие заканчивается, рождаются редкие виды
+      if(extinctionLevel < 0.6){
+        extinctionActive = false;
+
+        // Рождение обычных видов из трупов
+        const liveCorpses2 = corpses.filter(cp=>cp.alive&&cp.segs.length>0);
+        let bornNormal = 0;
+        for(let cp of liveCorpses2.slice(0, 10)){
+          if(Math.random()<0.4){
+            const seg=cp.segs[0];
+            const child=new Creature(seg.x,Math.max(2,seg.y-1),cp.color,2);
+            child.energy=100; child.seekingColony=true;
+            creatures.push(child); bornNormal++;
+          }
+        }
+
+        // Рождение РЕДКИХ видов (шанс зависит от масштаба вымирания)
+        const unusedRare = RARE_PALETTE.filter(p=>!activeColors.has(p));
+        const rareCount = Math.min(2, unusedRare.length);
+        for(let ri=0; ri<rareCount; ri++){
+          if(Math.random() < 0.6){ // 60% шанс на каждый редкий вид
+            const rCol = unusedRare[ri];
+            activeColors.add(rCol);
+            rareColors.add(rCol);
+            // редкий вид получает усиленные гены выживаемости
+            genePool[rCol] = {
+              aggression:    0.3 + Math.random()*0.4,
+              metabolism:    0.4 + Math.random()*0.3, // низкий метаболизм = живучий
+              photoRate:     1.5 + Math.random()*0.5, // высокий фотосинтез
+              socialTendency:0.6 + Math.random()*0.4,
+            };
+            // рождается маленькая группа в разных местах экрана
+            const spawnCount = 3 + Math.floor(Math.random()*4);
+            for(let k=0; k<spawnCount; k++){
+              const sx = 5 + Math.floor(Math.random()*(COLS-10));
+              const top = getSoilTop(sx);
+              const child = new Creature(sx, Math.max(2, top-2), rCol, 2);
+              child.energy = 180;
+              child.seekingColony = true;
+              creatures.push(child);
+            }
+            addLog('🌟 РЕДКИЙ ВИД: '+colorName(rCol)+' возник из пепла!');
+          }
+        }
+        if(bornNormal>0) addLog('🌱 Из вымирания возродилось '+bornNormal+' существ');
+        // вымирание — лучший шанс на химеру (экстремальный стресс)
+        const aliveExt=creatures.filter(x=>x.alive);
+        if(aliveExt.length>0){
+          const d=aliveExt[Math.floor(Math.random()*aliveExt.length)];
+          trySpawnChimers(d.head().x, Math.max(2,d.head().y-1));
+          trySpawnChimers(d.head().x, Math.max(2,d.head().y-1)); // двойной шанс
+        }
+      }
+    }
   }
   // видовой баланс + детектирование кластеров раз в 60 тиков
   if(cycle % 60 === 0){
-    const totalPop = creatures.filter(x=>x.alive).length || 1;
+    const totalPop = (tick._alive||creatures.filter(x=>x.alive)).length || 1;
     const colorCount = {};
     for(let x of creatures) if(x.alive) colorCount[x.color]=(colorCount[x.color]||0)+1;
     for(let x of creatures) if(x.alive) x.speciesFraction=(colorCount[x.color]||0)/totalPop;
@@ -2018,44 +2412,28 @@ function tick(){
 
   // существа
   for(let i2=0;i2<creatures.length;i2++){ if(creatures[i2].alive) creatures[i2].update(); }
-  if(creatures.length>500) creatures=creatures.filter(cr=>cr.alive);
+  // массивы чистятся каждые 500 тиков выше
 
   // мягкий потолок биомассы — перенаселение давит энергию, не убивает сразу
-  const alive=creatures.filter(cr=>cr.alive);
-  const biomass=alive.reduce((s,x)=>{
-    const w=x.socialStatus==='mega'?5:x.socialStatus==='empire'?3:x.socialStatus==='colony'?2:1;
-    return s+w;
-  },0);
-  if(biomass>350){
-    // мягкое давление
-    const pressure = (biomass - 350) / 350;
-    for(let cr of alive) cr.energy -= pressure * 0.8;
+  // взвешенная популяция — контроль нагрузки на экосистему
+  const alive = tick._alive;
+  const wpopNow = tick._wpop;
+  if(wpopNow > 200){
+    const pressure = (wpopNow - 200) / 200;
+    for(let cr of alive) cr.energy -= pressure * 0.6;
   }
-  if(biomass>500){
-    // жёсткий предел
+  if(wpopNow > 300){
     const sorted=alive.slice().sort((a,b)=>a.energy-b.energy);
-    let bm=biomass;
+    let wp=wpopNow;
     for(let cr of sorted){
-      if(bm<=400) break;
-      const w=cr.socialStatus==='mega'?5:cr.socialStatus==='empire'?3:cr.socialStatus==='colony'?2:1;
-      cr.die(); bm-=w;
+      if(wp<=230) break;
+      const w=cr.socialStatus==='mega'?10:cr.socialStatus==='empire'?5:1;
+      cr.die(); wp-=w;
     }
   }
 
-  // жёсткий пол 5
-  const aliveNow=creatures.filter(cr=>cr.alive);
-  if(aliveNow.length<30){
-    const cols=[...activeColors];
-    for(let n=0;n<30-aliveNow.length;n++){
-      const col=cols[Math.floor(Math.random()*cols.length)]||PALETTE[0];
-      const x=5+Math.floor(Math.random()*(COLS-10));
-      const top=getSoilTop(x);
-      const c2=new Creature(x,Math.max(2,top-2),col,2);
-      c2.energy=150; // достаточно энергии чтобы выжить
-      creatures.push(c2);
-    }
-    addLog('🌱 Жизнь возрождается из пепла');
-  }
+  // популяция свободна — нет искусственного пола
+  // вымирание возможно, восстановление только через споры и метаморфоз
 
   // ── ВОЙНЫ ИМПЕРИЙ ──
   if(cycle % 40 === 0){
@@ -2164,7 +2542,7 @@ function tick(){
         const sh=a.members[Math.floor(Math.random()*a.members.length)];
         const tg=b.members[Math.floor(Math.random()*b.members.length)];
         if(sh&&tg){
-          lasers.push({x1:sh.head().x,y1:sh.head().y,x2:tg.head().x,y2:tg.head().y,color:empKeys[i],timer:8,isMega:false});
+          lasers.push({x1:sh.head().x,y1:sh.head().y,x2:tg.head().x,y2:tg.head().y,color:empKeys[i],timer:10,isMega:false});
           tg.energy-=8+Math.random()*4;
         }
       }
@@ -2181,7 +2559,7 @@ function tick(){
         const sh=a.members[Math.floor(Math.random()*a.members.length)];
         const tg=b.members[Math.floor(Math.random()*b.members.length)];
         if(sh&&tg){
-          lasers.push({x1:sh.head().x,y1:sh.head().y,x2:tg.head().x,y2:tg.head().y,color:megKeys[i],timer:10,isMega:true});
+          lasers.push({x1:sh.head().x,y1:sh.head().y,x2:tg.head().x,y2:tg.head().y,color:megKeys[i],timer:14,isMega:true});
           tg.energy-=15+Math.random()*8;
         }
       }
@@ -2236,6 +2614,76 @@ function tick(){
     }
   }
 
+  // ── ОСВОБОЖДЕНИЕ ИЗ ГОР — каждые 60 тиков ──
+  if(cycle % 60 === 0){
+    // собираем все империи и меги
+    const bigGroups2 = {};
+    for(let cr of alive){
+      if(cr.socialStatus==='empire'||cr.socialStatus==='mega'){
+        if(!bigGroups2[cr.color]) bigGroups2[cr.color]=[];
+        bigGroups2[cr.color].push(cr);
+      }
+    }
+    for(let col in bigGroups2){
+      const grp = bigGroups2[col];
+      // сколько членов реально заблокированы почвой со всех сторон
+      let trappedCount=0;
+      for(let cr of grp){
+        const h=cr.head();
+        const blocked = [[0,1],[0,-1],[1,0],[-1,0]].filter(([dx,dy])=>{
+          const bx=h.x+dx, by=h.y+dy;
+          return bx>=0&&bx<COLS&&by>=0&&by<ROWS&&soil[by]&&soil[by][bx]&&soil[by][bx].solid;
+        }).length;
+        if(blocked>=3) trappedCount++;
+      }
+      if(trappedCount===0) { delete megaPositions[col]; continue; }
+
+      // обновляем или создаём трекер
+      const mcx=Math.round(grp.reduce((s,x)=>s+x.head().x,0)/grp.length);
+      const mcy=Math.round(grp.reduce((s,x)=>s+x.head().y,0)/grp.length);
+      if(!megaPositions[col]){
+        megaPositions[col]={cx:mcx,cy:mcy,stuckSince:cycle};
+        continue;
+      }
+      const mp=megaPositions[col];
+      const moved=Math.hypot(mcx-mp.cx,mcy-mp.cy);
+      if(moved>5){ mp.cx=mcx; mp.cy=mcy; mp.stuckSince=cycle; }
+
+      const stuckTicks=cycle-mp.stuckSince;
+      if(stuckTicks<800) continue; // ещё не застряли
+
+      // ЗАСТРЯЛИ — запускаем бурильщиков от каждого застрявшего члена
+      const activeDrillers=spores.filter(s=>s.alive&&s.isDriller&&s.color===col).length;
+      if(activeDrillers>=10) continue;
+
+      let spawned=0;
+      for(let cr of grp){
+        const h=cr.head();
+        // ищем блоки почвы рядом с этим существом
+        const soilDirs=[[0,1],[1,0],[-1,0],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]];
+        for(let [dx,dy] of soilDirs){
+          const bx=h.x+dx, by=h.y+dy;
+          if(bx<0||bx>=COLS||by<0||by>=ROWS) continue;
+          if(!(soil[by]&&soil[by][bx]&&soil[by][bx].solid)) continue;
+          // нашли блок рядом — ищем свободную точку для старта споры
+          for(let [sx2,sy2] of [[h.x,h.y],[h.x-1,h.y],[h.x+1,h.y],[h.x,h.y-1]]){
+            if(sx2<0||sx2>=COLS||sy2<0||sy2>=ROWS) continue;
+            if(soil[sy2]&&soil[sy2][sx2]&&soil[sy2][sx2].solid) continue;
+            const sp=new Spore(sx2,sy2,col);
+            sp.isDriller=true;
+            sp.energy=200;
+            spores.push(sp);
+            spawned++;
+            break;
+          }
+          if(spawned>=6) break;
+        }
+        if(spawned>=6) break;
+      }
+      if(spawned>0) addLog('⛏ '+colorName(col)+' выпустила '+spawned+' бурильщиков!');
+    }
+  }
+
   // ── ВЫБРОС СПОР из мегаструктур ──
   if(cycle % 80 === 0){
     const megaByColor = {};
@@ -2247,46 +2695,8 @@ function tick(){
     }
     for(let col in megaByColor){
       const grp = megaByColor[col];
-      // центр масс меги
       const mcx = Math.round(grp.reduce((s,x)=>s+x.head().x,0)/grp.length);
       const mcy = Math.round(grp.reduce((s,x)=>s+x.head().y,0)/grp.length);
-
-      // === ДЕТЕКТИРОВАНИЕ ЗАСТРЕВАНИЯ ===
-      const DAY_TICKS = 6000; // тиков в сутках
-      if(!megaPositions[col]){
-        megaPositions[col] = {cx:mcx, cy:mcy, stuckSince:cycle};
-      } else {
-        const mp = megaPositions[col];
-        const moved = Math.hypot(mcx-mp.cx, mcy-mp.cy);
-        if(moved > 3){
-          // мега сдвинулась — сбрасываем таймер
-          mp.cx=mcx; mp.cy=mcy; mp.stuckSince=cycle;
-        }
-        // застряла более 3 суток (18000 тиков)?
-        const stuckDays = (cycle - mp.stuckSince) / DAY_TICKS;
-        if(stuckDays >= 3){
-          // === СПОРЫ-БУРИЛЬЩИКИ — едят свой и чужой цвет ===
-          if(spores.filter(s=>s.alive&&s.color===col+'_drill').length < 6){
-            const drillCount = 2 + Math.floor(Math.random()*3);
-            for(let k=0;k<drillCount;k++){
-              const parent = grp[Math.floor(Math.random()*grp.length)];
-              const ph = parent.head();
-              // выпускаем вниз и в стороны
-              const ox = Math.floor(Math.random()*7)-3;
-              const oy = Math.floor(Math.random()*3); // вниз или горизонтально
-              const sp = new Spore(
-                Math.max(1,Math.min(COLS-2, ph.x+ox)),
-                Math.min(ROWS-2, ph.y+oy),
-                col
-              );
-              sp.isDriller = true; // ест свой и чужой цвет
-              spores.push(sp);
-            }
-            if(Math.random()<0.3) addLog('⛏ '+colorName(col)+' выпустила бурильщиков!');
-          }
-          continue; // застрявшая мега не выпускает обычные споры
-        }
-      }
 
       // === ОБЫЧНЫЕ СПОРЫ — вверх и в стороны ===
       if(spores.filter(s=>s.alive&&s.color===col&&!s.isDriller).length > 12) continue;
@@ -2300,10 +2710,6 @@ function tick(){
         const sy = Math.max(1, ph.y + oy);
         spores.push(new Spore(sx, sy, col));
       }
-    }
-    // чистим позиции мег которых больше нет
-    for(let col in megaPositions){
-      if(!megaByColor[col]) delete megaPositions[col];
     }
   }
 
@@ -2368,8 +2774,8 @@ function meteorStrike(){
     for(let x=mx-14;x<mx+14;x++){
       if(x<0||x>=COLS)continue;
       const d=Math.abs(x-mx)+Math.abs(y-(GROUND_Y-1));
-      if(d<8) soil[y][x]=null;
-      else if(d<13) soil[y][x]={solid:true,color:null,shade:0.8,stardust:true};
+      if(d<8) { soil[y][x]=null; soilDirty=true; }
+      else if(d<13) { soil[y][x]={solid:true,color:null,shade:0.8,stardust:true}; soilDirty=true; }
     }
   for(let cr of creatures)
     if(cr.alive&&Math.abs(cr.head().x-mx)<24) cr.energy=Math.min(200,cr.energy*3);
@@ -2380,11 +2786,81 @@ function triggerDrought(){
   showBanner('☀ ВЕЛИКАЯ ЗАСУХА', '#cc6600', 500);
   cataclysms.drought++;
 }
+// ── ХИМЕРЫ — редчайшие мутанты из нескольких цветов ───────────────
+// 2 цвета: 3% шанс, 3 цвета: 1%, 4 цвета: 0.3%, 5 цветов: 0.1%
+function spawnChimer(x, y, numColors){
+  const cols = [...activeColors];
+  if(cols.length < numColors) return null;
+  // выбираем случайные разные цвета
+  const shuffled = cols.sort(()=>Math.random()-0.5).slice(0, numColors);
+  const child = new Creature(x, y, shuffled[0], 3+numColors);
+  child.chimerColors = shuffled;
+  child.energy = 150 + numColors * 30;
+  child.isChimer = true;
+  // гены — смесь всех цветов
+  const baseGenes = shuffled.map(c=>genePool[c]||defaultGenes());
+  child.genes = {
+    aggression:    baseGenes.reduce((s,g)=>s+g.aggression,0)/numColors,
+    metabolism:    baseGenes.reduce((s,g)=>s+g.metabolism,0)/numColors * 0.7, // химеры живучи
+    photoRate:     baseGenes.reduce((s,g)=>s+g.photoRate,0)/numColors * 1.3,
+    socialTendency:baseGenes.reduce((s,g)=>s+g.socialTendency,0)/numColors,
+  };
+  child.seekingColony = true;
+  creatures.push(child);
+  const names = ['двухцветная','трёхцветная','четырёхцветная','пятицветная'];
+  addLog('🌈 ХИМЕРА! '+names[numColors-2]+' ('+shuffled.map(colorName).join('+')+')');
+  return child;
+}
+
+function trySpawnChimers(x, y){
+  // пробуем породить химеру с убывающей вероятностью
+  const r = Math.random();
+  if(r < 0.001)      spawnChimer(x, y, 5); // 0.1%
+  else if(r < 0.004) spawnChimer(x, y, 4); // 0.3%
+  else if(r < 0.014) spawnChimer(x, y, 3); // 1%
+  else if(r < 0.044) spawnChimer(x, y, 2); // 3%
+}
+
 function triggerStorm(){
-  geneticStorm=true; stormTimer=250;
+  geneticStorm=true; stormTimer=600; // длиннее — 600 тиков
   addLog('🧬 ГЕНЕТИЧЕСКИЙ ШТОРМ! Жизнь меняется.');
-  showBanner('🧬 ГЕНЕТИЧЕСКИЙ ШТОРМ', '#8844cc', 250);
+  showBanner('🧬 ГЕНЕТИЧЕСКИЙ ШТОРМ', '#8844cc', 600);
   cataclysms.storm++;
+  // шторм порождает 1-2 новых вида + шанс химеры
+  const unused=PALETTE.filter(p=>!activeColors.has(p));
+  const count=Math.min(2, unused.length);
+  for(let i=0;i<count;i++){
+    const col=unused[i];
+    activeColors.add(col);
+    genePool[col]=mutateGenes(defaultGenes(),0.5);
+    const alive=creatures.filter(x=>x.alive);
+    if(alive.length>0){
+      const donor=alive[Math.floor(Math.random()*alive.length)];
+      const h=donor.head();
+      const child=new Creature(
+        Math.max(1,Math.min(COLS-2,h.x+Math.floor(Math.random()*7)-3)),
+        Math.max(2,h.y-1), col, 2
+      );
+      child.energy=120; child.seekingColony=true;
+      child.genes=mutateGenes(donor.genes, 0.5);
+      genePool[col]={...child.genes};
+      creatures.push(child);
+      addLog(`☢ Мутация из шторма: ${colorName(col)}`);
+    }
+  }
+  // при шторме повышенный шанс химер (×5)
+  const aliveNow=creatures.filter(x=>x.alive);
+  if(aliveNow.length>0){
+    for(let k=0;k<10;k++){ // 10 попыток — больше шансов
+      const donor=aliveNow[Math.floor(Math.random()*aliveNow.length)];
+      const h=donor.head();
+      const r=Math.random();
+      if(r<0.05)      { spawnChimer(h.x,Math.max(2,h.y-1),5); break; }
+      else if(r<0.15) { spawnChimer(h.x,Math.max(2,h.y-1),4); break; }
+      else if(r<0.35) { spawnChimer(h.x,Math.max(2,h.y-1),3); break; }
+      else if(r<0.65) { spawnChimer(h.x,Math.max(2,h.y-1),2); break; }
+    }
+  }
 }
 
 // ── ПОТОП ──────────────────────────────────────────────────────────
@@ -2397,29 +2873,37 @@ function triggerFlood(){
 }
 
 function floodAftermath(){
-  // каждый труп с шансом 40% порождает новое существо-мутанта
   let born=0;
   const snapshot=[...corpses];
   for(let cp of snapshot){
     if(!cp.segs||cp.segs.length===0) continue;
     if(Math.random()<0.4){
-      const mutRate=0.35; // потоп порождает много мутантов
+      const mutRate=0.35;
       let col=cp.color;
       if(Math.random()<mutRate){
         const unused=PALETTE.filter(p=>!activeColors.has(p));
         col=unused.length>0?unused[0]:PALETTE[Math.floor(Math.random()*PALETTE.length)];
         activeColors.add(col);
+        if(!genePool[col]) genePool[col]=mutateGenes(defaultGenes(),0.3);
       }
       const seg=cp.segs[Math.floor(Math.random()*cp.segs.length)];
       const top=getSoilTop(seg.x);
-      const child=new Creature(seg.x,Math.max(2,top-1),col,1);
-      child.energy=65; child.seekingColony=true;
+      // рождаем выше поверхности почвы, с запасом энергии
+      const child=new Creature(seg.x, Math.max(1, top-2), col, 2);
+      child.energy=180;
+      child.seekingColony=true;
       creatures.push(child);
       born++;
     }
   }
-  corpses=[]; // вода смыла все трупы
-  if(born>0) addLog(`🐣 Потоп породил ${born} новых существ!`);
+  corpses=[];
+  // потоп иногда порождает химеру
+  const aliveF=creatures.filter(x=>x.alive);
+  if(aliveF.length>0){
+    const d=aliveF[Math.floor(Math.random()*aliveF.length)];
+    trySpawnChimers(d.head().x, Math.max(2,d.head().y-1));
+  }
+  if(born>0) addLog(`🐣 Потоп породил ${born} мутантов!`);
 }
 
 // ── UI ─────────────────────────────────────────────────────────────
@@ -2443,26 +2927,70 @@ document.getElementById('btnLeviathan').addEventListener('click',function(){
   }
 });
 
+document.getElementById('btnScreenshot').addEventListener('click',function(){
+  // рисуем финальный кадр на временный canvas с UI
+  const link=document.createElement('a');
+  link.download='aquarium_'+Date.now()+'.png';
+  link.href=canvas.toDataURL('image/png');
+  link.click();
+});
+
+// часы — обновляются каждую секунду
+function updateClock(){
+  const el=document.getElementById('clock');
+  if(!el) return;
+  const now=new Date();
+  const dd=String(now.getDate()).padStart(2,'0');
+  const mo=String(now.getMonth()+1).padStart(2,'0');
+  const yy=now.getFullYear();
+  const hh=String(now.getHours()).padStart(2,'0');
+  const mm=String(now.getMinutes()).padStart(2,'0');
+  const ss=String(now.getSeconds()).padStart(2,'0');
+  el.textContent=dd+'.'+mo+'.'+yy+'  '+hh+':'+mm+':'+ss;
+}
+updateClock();
+setInterval(updateClock,1000);
+
 // ── ИНИЦИАЛИЗАЦИЯ ──────────────────────────────────────────────────
 function init(){
-  initSoil(); creatures=[]; corpses=[]; spores=[]; activeColors.clear(); cycle=0; logs=[]; wars={}; truces={}; splitCooldown={}; meteorFlash=null; genePool={}; popHistory={}; leviathan=null; clusterDowngrade={}; clusterNames={}; colonyCounter=0; lasers=[]; megaPositions={};
+  initSoil(); initSoilCanvas(); creatures=[]; corpses=[]; spores=[]; activeColors.clear(); rareColors.clear(); cycle=0; logs=[]; wars={}; truces={}; splitCooldown={}; meteorFlash=null; genePool={}; popHistory={}; leviathan=null; clusterDowngrade={}; clusterNames={}; colonyCounter=0; lasers=[]; megaPositions={}; extinctionActive=false; extinctionLevel=0;
   cataclysms.meteor=0; cataclysms.drought=0; cataclysms.storm=0; cataclysms.flood=0; cataclysms.leviathan=0;
-  const startCols=PALETTE.slice(0,7);
+
+  // запускаем все 10 видов, каждый в своей зоне, с уникальной нишей
+  const startCols = [...PALETTE];
   STARTER_COLORS = new Set(startCols);
-  startCols.forEach(col=>{
+  const zoneW = Math.floor((COLS-10) / startCols.length);
+
+  // уникальные ниши — реальное разнообразие стратегий
+  const niches = [
+    {aggression:0.1, metabolism:0.6, photoRate:1.6, socialTendency:0.9}, // фотосинтетик
+    {aggression:0.9, metabolism:1.3, photoRate:0.6, socialTendency:0.2}, // хищник
+    {aggression:0.5, metabolism:0.8, photoRate:1.2, socialTendency:1.0}, // колониальный
+    {aggression:0.2, metabolism:0.5, photoRate:0.8, socialTendency:0.1}, // одиночка
+    {aggression:0.7, metabolism:1.1, photoRate:1.0, socialTendency:0.5}, // боец
+    {aggression:0.4, metabolism:0.7, photoRate:1.4, socialTendency:0.7}, // солнечный
+    {aggression:0.6, metabolism:1.0, photoRate:0.9, socialTendency:0.8}, // социальный боец
+    {aggression:0.3, metabolism:0.9, photoRate:1.1, socialTendency:0.4}, // универсал
+    {aggression:0.8, metabolism:0.8, photoRate:0.7, socialTendency:0.3}, // быстрый хищник
+    {aggression:0.1, metabolism:0.5, photoRate:1.5, socialTendency:0.6}, // эффективный
+  ];
+
+  startCols.forEach((col, idx) => {
     activeColors.add(col);
-    genePool[col] = defaultGenes();
-    for(let i=0;i<16;i++){
-      const x=5+Math.floor(Math.random()*(COLS-10));
-      const top=getSoilTop(x);
-      const y=Math.max(2,top-1-Math.floor(Math.random()*4));
-      const c=new Creature(x,y,col,3);
-      c.energy=300;
-      c.seekingColony=true;
+    genePool[col] = niches[idx] || mutateGenes(defaultGenes(), 0.3);
+    const zoneX = 5 + idx * zoneW;
+    for(let i=0; i<10; i++){ // 10 на вид = 100 стартовых существ
+      const x = zoneX + Math.floor(Math.random()*zoneW);
+      const top = getSoilTop(Math.min(COLS-1,x));
+      const y = Math.max(2, top-1-Math.floor(Math.random()*3));
+      const c = new Creature(Math.min(COLS-2,x), y, col, 1);
+      c.energy = 250;
+      c.genes = {...niches[idx]}; // каждое существо рождается уже со своими генами
+      c.seekingColony = true;
       creatures.push(c);
     }
   });
-  addLog('🌍 Мир сотворён. Летопись начинается.');
+  addLog('🌍 Мир сотворён. 10 видов борются за выживание.');
 }
 
 // ── КЛИК НА СУЩЕСТВО ──────────────────────────────────────────────
@@ -2514,12 +3042,20 @@ function updateCreatureCard(){
   const card=document.getElementById('creature-card');
   if(!card) return;
   card.className='active';
-  const clusterLine = cr.clusterName ? `<div class="card-row"><span>Кластер</span><span class="val" style="color:${cr.color};font-size:9px">${cr.clusterName}</span></div>` : '';
+  // имя: члены империи/меги носят имя структуры, колония без структуры — личное
+  const displayName = (cr.socialStatus==='empire'||cr.socialStatus==='mega') && cr.clusterName
+    ? cr.clusterName
+    : cr.name;
+  // принадлежность: только если есть реальная структура выше колонии
+  const affiliation = (cr.socialStatus==='empire'||cr.socialStatus==='mega') && cr.clusterName
+    ? `<div class="card-row"><span>Структура</span><span class="val" style="color:${cr.color};font-size:9px">${cr.clusterName}</span></div>`
+    : '';
   card.innerHTML=`
-    <div class="card-name" style="color:${cr.color}">${cr.name}</div>
+    <div class="card-name" style="color:${cr.color}">${displayName}</div>
+    <div class="card-row"><span>Личн. имя</span><span class="val" style="font-size:9px;color:#666">${cr.name}</span></div>
     <div class="card-row"><span>Вид</span><span class="val">${colorName(cr.color)}</span></div>
     <div class="card-row"><span>Статус</span><span class="val">${{solo:'Одиночка',colony:'🔵Колония',empire:'⚔️Империя',mega:'👑Мега'}[cr.socialStatus]||'?'}</span></div>
-    ${clusterLine}
+    ${affiliation}
     <div class="card-row"><span>Сегм.</span><span class="val">${cr.size}</span></div>
     <div class="card-row"><span>Энергия</span><span class="val">${Math.round(cr.energy)}</span></div>
     <div class="card-row"><span>Возраст</span><span class="val">${cr.age}</span></div>
