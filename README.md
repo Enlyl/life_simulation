@@ -124,13 +124,7 @@ open world.html
 
 ## 📸 Превью
 
-Добавь сюда скриншот:
-
-
 <img width="656" height="635" alt="preview" src="https://github.com/user-attachments/assets/581ecfe0-85ea-4714-9c71-9f4ac326a137" />
-
-
-```
 
 ---
 
